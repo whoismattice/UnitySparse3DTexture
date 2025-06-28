@@ -5,6 +5,7 @@
 #include <dxgi.h>
 #include "IUnityInterface.h"
 #include "IUnityGraphics.h"
+#include "TilingInfo.h"
 
 
 
@@ -22,6 +23,14 @@ extern "C"
 
     // This function will release the native resource.
     UNITY_INTERFACE_EXPORT void DestroyVolumetricResource(ID3D12Resource* resource);
+
+    UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, ResourceTilingInfo* outInfo);
+
+    UNITY_INTERFACE_EXPORT void GetAllSubresourceTilings(
+        ID3D12Resource* resource,
+        SubresourceTilingInfo* subresourceTilingArray,
+        int arraySize
+    );
 
     void GetResourceTiling(ID3D12Resource* resource);
 }

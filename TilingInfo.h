@@ -1,10 +1,15 @@
 #pragma once
 
-struct TilingInfo {
+struct ResourceTilingInfo {
 	unsigned int TileWidthInTexels;
 	unsigned int TileHeightInTexels;
 	unsigned int TileDepthInTexels;
+	unsigned int SubresourceCount;
+	unsigned int NumPackedMips;
+};
 
-	unsigned int SubresourceWidthInTiles;
-	unsigned int SubresourceHeightInTiles;
+struct SubresourceTilingInfo {
+	unsigned int WidthInTiles;
+	unsigned int HeightInTiles;
+	unsigned int DepthInTiles;
 };

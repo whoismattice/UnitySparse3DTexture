@@ -198,6 +198,64 @@ void GetResourceTiling(ID3D12Resource* resource)
 	UNITY_LOG(s_Log, buffer);
 }
 
+UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, ResourceTilingInfo* outInfo) {
+	if (!resource || !outInfo)
+	{
+		return;
+	}
+
+	D3D12_RESOURCE_DESC resourceDescription = resource->GetDesc();
+
+	UINT numTilesForEntireResource;
+	D3D12_PACKED_MIP_INFO packedMipInfo;
+	D3D12_TILE_SHAPE resourceTileShape;
+	UINT numSubresourceTilings = 1;
+	D3D12_SUBRESOURCE_TILING subresourceTiling;
+
+	UINT numSubresources = 0;
+
+	s_Device->GetResourceTiling(
+		resource,
+		&numTilesForEntireResource,
+		&packedMipInfo,
+		&resourceTileShape,
+		&numSubresources,
+		0,
+		&subresourceTiling
+	);
+	outInfo->TileWidthInTexels = resourceTileShape.WidthInTexels;
+	outInfo->TileHeightInTexels = resourceTileShape.HeightInTexels;
+	outInfo->TileDepthInTexels = resourceTileShape.DepthInTexels;
+	outInfo->SubresourceCount = numSubresources;
+	outInfo->NumPackedMips = packedMipInfo.NumPackedMips;
+}
+
+UNITY_INTERFACE_EXPORT void GetAllSubresourceTilings(
+	ID3D12Resource* resource,
+	SubresourceTilingInfo* outSubresourceTilingArray,
+	int arraySize
+)	{
+		// Checks for null pointers
+		if (!s_Device || !resource || !outSubresourceTilingArray)
+		{
+			return;
+		}
+
+		auto subresourceTilings = new D3D12_SUBRESOURCE_TILING[arraySize];
+
+		UINT numSubresources = arraySize;
+
+		s_Device->GetResourceTiling(resource, nullptr, nullptr, nullptr, &numSubresources, 0, subresourceTilings);
+
+		for (size_t i = 0; i < arraySize; i++)
+		{
+			outSubresourceTilingArray[i].WidthInTiles = subresourceTilings[i].WidthInTiles;
+			outSubresourceTilingArray[i].HeightInTiles = subresourceTilings[i].HeightInTiles;
+			outSubresourceTilingArray[i].DepthInTiles = subresourceTilings[i].DepthInTiles;
+		}
+
+		delete[] subresourceTilings;
+	}
 
 static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data)
 {
