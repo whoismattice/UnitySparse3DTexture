@@ -12,4 +12,5 @@ struct SubresourceTilingInfo {
 	unsigned int WidthInTiles;
 	unsigned int HeightInTiles;
 	unsigned int DepthInTiles;
+	unsigned int StartTileIndex;
 };

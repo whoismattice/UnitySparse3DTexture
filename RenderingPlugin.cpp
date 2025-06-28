@@ -206,7 +206,6 @@ UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, Reso
 
 	D3D12_RESOURCE_DESC resourceDescription = resource->GetDesc();
 
-	UINT numTilesForEntireResource;
 	D3D12_PACKED_MIP_INFO packedMipInfo;
 	D3D12_TILE_SHAPE resourceTileShape;
 	UINT numSubresourceTilings = 1;
@@ -216,7 +215,7 @@ UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, Reso
 
 	s_Device->GetResourceTiling(
 		resource,
-		&numTilesForEntireResource,
+		nullptr,
 		&packedMipInfo,
 		&resourceTileShape,
 		&numSubresources,
@@ -252,6 +251,7 @@ UNITY_INTERFACE_EXPORT void GetAllSubresourceTilings(
 			outSubresourceTilingArray[i].WidthInTiles = subresourceTilings[i].WidthInTiles;
 			outSubresourceTilingArray[i].HeightInTiles = subresourceTilings[i].HeightInTiles;
 			outSubresourceTilingArray[i].DepthInTiles = subresourceTilings[i].DepthInTiles;
+			outSubresourceTilingArray[i].StartTileIndex = subresourceTilings[i].StartTileIndexInOverallResource;
 		}
 
 		delete[] subresourceTilings;
