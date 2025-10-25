@@ -312,22 +312,47 @@ UNITY_INTERFACE_EXPORT bool TestHeapFragmentation()
 	testHeap->FreeTiles(d.heapOffsetInTiles, 2);
 
 	// Should have 4 free tiles but fragmented
-	if (testHeap->GetFreeTiles() != 4) {
+	if (testHeap->GetFreeTiles() != 6) {
+
+		char resultBuffer[256];
+		sprintf_s(resultBuffer, "[C++] TestHeapFragmentation: Call complete. Value of numSubresources is now: %u", testHeap->GetFreeTiles());
+		UNITY_LOG(s_Log, resultBuffer);
+
+
+
 		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Wrong free count");
 		return false;
 	}
 
-	// Try to allocate 4 contiguous - should fail due to fragmentation
-	auto bigAlloc = testHeap->AllocateTiles(4);
+	auto bigAlloc = testHeap->AllocateTiles(5);
 	if (bigAlloc.success) {
-		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Should fail on fragmented alloc");
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Should fail - no 5-tile contiguous block");
 		return false;
 	}
 
-	// But 2 tiles should succeed
+	// But 4 tiles SHOULD succeed (fits in the [6-9] block)
+	auto mediumAlloc = testHeap->AllocateTiles(4);
+	if (!mediumAlloc.success) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: 4-tile alloc should succeed in [6-9] block");
+		return false;
+	}
+
+	// Now only 2 tiles remain at [2-3]
+	if (testHeap->GetFreeTiles() != 2) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Should have 2 tiles left");
+		return false;
+	}
+
+	// This 2-tile allocation should also succeed
 	auto smallAlloc = testHeap->AllocateTiles(2);
 	if (!smallAlloc.success) {
-		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Small alloc should succeed");
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Final 2-tile alloc should succeed");
+		return false;
+	}
+
+	// Now completely full
+	if (testHeap->GetFreeTiles() != 0) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Should be completely full now");
 		return false;
 	}
 
