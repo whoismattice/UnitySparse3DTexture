@@ -6,7 +6,9 @@
 #include "IUnityLog.h"
 #include "IUnityGraphicsD3D12.h"
 #include "IUnityInterface.h"
+#include "FixedHeap.h"
 #include <string>
+#include <memory>
 
 
 // Unity interfaces
@@ -21,6 +23,8 @@ static ID3D12Device* s_Device = nullptr;
 // Forward declaration of internal static functions
 static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType);
 static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data);
+
+static std::unique_ptr<IHeap> g_tileHeap = nullptr;
 
 
 // This function is called when the plugin is loaded
@@ -79,7 +83,6 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 	if (s_Log)
 	{
 		//s_Log = nullptr;
-		
 	}
 }
 
@@ -88,7 +91,7 @@ UnityRenderingEventAndData UNITY_INTERFACE_API GetRenderEventAndDataCallback()
 	return OnRenderEvent;
 }
 
-ID3D12Resource* UNITY_INTERFACE_API CreateVolumetricResource(int width, int height, int depth)
+ID3D12Resource* UNITY_INTERFACE_API CreateVolumetricResource(int width, int height, int depth, int mipmapCount, DXGI_FORMAT format)
 {
 	// If graphics device is not created, we can't create a resource
 	if (!s_Device)
@@ -96,7 +99,7 @@ ID3D12Resource* UNITY_INTERFACE_API CreateVolumetricResource(int width, int heig
 		UNITY_LOG_ERROR(s_Log, "CreateVolumetricResource called but not D3D12 device is null");
 		return nullptr;
 	}
-
+	
 	D3D12_RESOURCE_DESC desc = {};
 
 	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
@@ -104,13 +107,15 @@ ID3D12Resource* UNITY_INTERFACE_API CreateVolumetricResource(int width, int heig
 	desc.Width = static_cast<UINT64>(width);
 	desc.Height = static_cast<UINT>(height);
 	desc.DepthOrArraySize = static_cast<UINT16>(depth);
-	desc.MipLevels = 1;
-	desc.Format = DXGI_FORMAT_R8_UNORM,
+	desc.MipLevels = mipmapCount;
+	desc.Format = static_cast<DXGI_FORMAT>(format),
 	desc.SampleDesc.Count = 1,
 	desc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
 	desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
 	ID3D12Resource* reservedResource = nullptr;
+	UNITY_LOG(s_Log, "successfully created resource flags");
+	
 
 	HRESULT hr = s_Device->CreateReservedResource(
 		&desc,
@@ -119,14 +124,16 @@ ID3D12Resource* UNITY_INTERFACE_API CreateVolumetricResource(int width, int heig
 		IID_PPV_ARGS(&reservedResource)
 	);
 
+
 	if (SUCCEEDED(hr))
 	{
 		UNITY_LOG(s_Log, "Successfully created a volumetric resource");
-		
-		GetResourceTiling(reservedResource);
 		return reservedResource;
 	}
-
+	if (FAILED(hr))
+	{
+		UNITY_LOG_ERROR(s_Log, "Could not create a volumetric resource");
+	}
 	UNITY_LOG_ERROR(s_Log, "Could not create a volumetric resource");
 	return nullptr;
 }
@@ -148,56 +155,6 @@ void UNITY_INTERFACE_API DestroyVolumetricResource(ID3D12Resource* resource)
 	return;
 }
 
-void GetResourceTiling(ID3D12Resource* resource)
-{
-	// Ensures D3D12 device and resource are both valid
-	if (!s_Device || !resource)
-	{
-		UNITY_LOG_ERROR(s_Log, "GetResourceTiling: Device or resource is null");
-	}
-
-	D3D12_RESOURCE_DESC resourceDescription = resource->GetDesc();
-
-	UINT numTilesForEntireResource;
-	D3D12_PACKED_MIP_INFO packedMipInfo;
-	D3D12_TILE_SHAPE resourceTileShape;
-	UINT numSubresourceTilings = 1;
-	D3D12_SUBRESOURCE_TILING subresourceTiling;
-
-	s_Device->GetResourceTiling(
-		resource,
-		&numTilesForEntireResource,
-		&packedMipInfo,
-		&resourceTileShape,
-		&numSubresourceTilings,
-		0,
-		&subresourceTiling
-		);
-
-	char buffer[256];
-	
-	sprintf_s(buffer, "Total tiles for resource: %u", numTilesForEntireResource);
-	UNITY_LOG(s_Log, buffer);
-
-	sprintf_s(buffer, "Total tiles for resource: %u", numTilesForEntireResource);
-
-	sprintf_s(buffer, "Standard tile shape (WxHxD in texels): %u x %u x %u",
-		resourceTileShape.WidthInTexels,
-		resourceTileShape.HeightInTexels,
-		resourceTileShape.DepthInTexels);
-	UNITY_LOG(s_Log, buffer);
-
-	// The subresourceTiling provides more detail for this specific subresource (mip level 0)
-	sprintf_s(buffer, "Subresource tile count (WxHxD in tiles): %u x %u x %u",
-		subresourceTiling.WidthInTiles,
-		subresourceTiling.HeightInTiles,
-		subresourceTiling.DepthInTiles);
-	UNITY_LOG(s_Log, buffer);
-
-	sprintf_s(buffer, "Subresource tile offset: %u", subresourceTiling.StartTileIndexInOverallResource);
-	UNITY_LOG(s_Log, buffer);
-}
-
 UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, ResourceTilingInfo* outInfo) {
 	if (!resource || !outInfo)
 	{
@@ -205,28 +162,34 @@ UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, Reso
 	}
 
 	D3D12_RESOURCE_DESC resourceDescription = resource->GetDesc();
-
+	UINT numTilesForEntireResource = 0;
 	D3D12_PACKED_MIP_INFO packedMipInfo;
 	D3D12_TILE_SHAPE resourceTileShape;
-	UINT numSubresourceTilings = 1;
-	D3D12_SUBRESOURCE_TILING subresourceTiling;
+	UINT numSubresources = resourceDescription.MipLevels;
 
-	UINT numSubresources = 0;
+	char resultBuffer[256];
+	auto subresourceTilings = new D3D12_SUBRESOURCE_TILING[numSubresources];
 
 	s_Device->GetResourceTiling(
 		resource,
-		nullptr,
+		&numTilesForEntireResource,
 		&packedMipInfo,
 		&resourceTileShape,
 		&numSubresources,
 		0,
-		&subresourceTiling
+		subresourceTilings
 	);
+
+	sprintf_s(resultBuffer, "[C++] GetResourceTilingInfo: Call complete. Value of numSubresources is now: %u", numSubresources);
+	UNITY_LOG(s_Log, resultBuffer);
+
 	outInfo->TileWidthInTexels = resourceTileShape.WidthInTexels;
 	outInfo->TileHeightInTexels = resourceTileShape.HeightInTexels;
 	outInfo->TileDepthInTexels = resourceTileShape.DepthInTexels;
 	outInfo->SubresourceCount = numSubresources;
 	outInfo->NumPackedMips = packedMipInfo.NumPackedMips;
+
+	delete[] subresourceTilings;
 }
 
 UNITY_INTERFACE_EXPORT void GetAllSubresourceTilings(
@@ -257,6 +220,8 @@ UNITY_INTERFACE_EXPORT void GetAllSubresourceTilings(
 		delete[] subresourceTilings;
 	}
 
+
+
 static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data)
 {
 	// Return if GFX device not initialized
@@ -273,4 +238,89 @@ static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data)
 	ID3D12GraphicsCommandList* commandList = recordingState.commandList;
 
 	UNITY_LOG(s_Log, "Native Plugin: OnRenderEvent Callback Triggered");
+}
+
+UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()
+{
+	if (!s_Device) return false;
+
+	auto testHeap = std::make_unique<FixedHeap>(s_Device, 10 * 64 * 1024); // 10 tiles
+
+	// Test 1: Simple allocation
+	auto alloc1 = testHeap->AllocateTiles(3);
+	if (!alloc1.success || alloc1.heapOffsetInTiles != 0) {
+		UNITY_LOG_ERROR(s_Log, "Test failed: First allocation");
+		return false;
+	}
+
+	// Test 2: Second allocation should start after first
+	auto alloc2 = testHeap->AllocateTiles(2);
+	if (!alloc2.success || alloc2.heapOffsetInTiles != 3) {
+		UNITY_LOG_ERROR(s_Log, "Test failed: Second allocation offset");
+		return false;
+	}
+
+	// Test 3: Capacity tracking
+	if (testHeap->GetUsedTiles() != 5 || testHeap->GetFreeTiles() != 5) {
+		UNITY_LOG_ERROR(s_Log, "Test failed: Capacity tracking");
+		return false;
+	}
+
+	// Test 4: Free and reallocate (tests coalescing)
+	testHeap->FreeTiles(0, 3);
+	testHeap->FreeTiles(3, 2);
+	auto alloc3 = testHeap->AllocateTiles(5); // Should fit in coalesced space
+	if (!alloc3.success || alloc3.heapOffsetInTiles != 0) {
+		UNITY_LOG_ERROR(s_Log, "Test failed: Free/coalesce/reallocate");
+		return false;
+	}
+
+	// Test 5: Overflow
+	auto allocFail = testHeap->AllocateTiles(10); // Only 5 tiles free
+	if (allocFail.success) {
+		UNITY_LOG_ERROR(s_Log, "Test failed: Should have failed overflow");
+		return false;
+	}
+
+	UNITY_LOG(s_Log, "All heap tests passed!");
+	return true;
+}
+
+
+UNITY_INTERFACE_EXPORT bool TestHeapFragmentation()
+{
+	auto testHeap = std::make_unique<FixedHeap>(s_Device, 10 * 64 * 1024);
+
+	// Allocate pattern: [A][B][C][D]
+	auto a = testHeap->AllocateTiles(2);
+	auto b = testHeap->AllocateTiles(2);
+	auto c = testHeap->AllocateTiles(2);
+	auto d = testHeap->AllocateTiles(2);
+
+	// Free B and D, creating fragmentation: [A][FREE][C][FREE]
+	testHeap->FreeTiles(b.heapOffsetInTiles, 2);
+	testHeap->FreeTiles(d.heapOffsetInTiles, 2);
+
+	// Should have 4 free tiles but fragmented
+	if (testHeap->GetFreeTiles() != 4) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Wrong free count");
+		return false;
+	}
+
+	// Try to allocate 4 contiguous - should fail due to fragmentation
+	auto bigAlloc = testHeap->AllocateTiles(4);
+	if (bigAlloc.success) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Should fail on fragmented alloc");
+		return false;
+	}
+
+	// But 2 tiles should succeed
+	auto smallAlloc = testHeap->AllocateTiles(2);
+	if (!smallAlloc.success) {
+		UNITY_LOG_ERROR(s_Log, "Fragmentation test: Small alloc should succeed");
+		return false;
+	}
+
+	UNITY_LOG(s_Log, "Fragmentation test passed!");
+	return true;
 }
