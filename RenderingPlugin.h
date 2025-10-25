@@ -19,7 +19,7 @@ extern "C"
     // We will add stubs for resource creation later. For now, we declare them.
     // This function will eventually create the D3D12 resource and return a handle.
     // We use void* as a generic handle type for now.
-    UNITY_INTERFACE_EXPORT ID3D12Resource* CreateVolumetricResource(int width, int height, int depth);
+    UNITY_INTERFACE_EXPORT ID3D12Resource* CreateVolumetricResource(int width, int height, int depth, int mipmapCount, DXGI_FORMAT format);
 
     // This function will release the native resource.
     UNITY_INTERFACE_EXPORT void DestroyVolumetricResource(ID3D12Resource* resource);
