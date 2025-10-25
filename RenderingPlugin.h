@@ -32,5 +32,7 @@ extern "C"
         int arraySize
     );
 
-    void GetResourceTiling(ID3D12Resource* resource);
+    UNITY_INTERFACE_EXPORT bool TestHeapFragmentation();
+
+    UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation();
 }

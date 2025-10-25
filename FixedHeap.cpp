@@ -80,7 +80,7 @@ void FixedHeap::CoalesceFreeBlocks()
 	std::vector<FreeBlock> merged;
 	merged.push_back(m_freeBlocks[0]);
 
-	for (size_t i = 1; i < m_freeBlocks.size(), i++;)
+	for (size_t i = 1; i < m_freeBlocks.size(); i++)
 	{
 		FreeBlock& last = merged.back();
 		FreeBlock current = m_freeBlocks[i];

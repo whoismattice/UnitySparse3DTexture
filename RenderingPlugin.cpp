@@ -246,26 +246,35 @@ UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()
 
 	auto testHeap = std::make_unique<FixedHeap>(s_Device, 10 * 64 * 1024); // 10 tiles
 
+	if (testHeap)
+	{
+		UNITY_LOG(s_Log, "Successfully created heap object");
+	}
+	else {
+		UNITY_LOG_ERROR(s_Log, "Couldn't create heap object");
+	}
+
+	
 	// Test 1: Simple allocation
 	auto alloc1 = testHeap->AllocateTiles(3);
 	if (!alloc1.success || alloc1.heapOffsetInTiles != 0) {
 		UNITY_LOG_ERROR(s_Log, "Test failed: First allocation");
 		return false;
 	}
-
+	UNITY_LOG(s_Log, "Successfully passed test 1");
 	// Test 2: Second allocation should start after first
 	auto alloc2 = testHeap->AllocateTiles(2);
 	if (!alloc2.success || alloc2.heapOffsetInTiles != 3) {
 		UNITY_LOG_ERROR(s_Log, "Test failed: Second allocation offset");
 		return false;
 	}
-
+	UNITY_LOG(s_Log, "Successfully passed test 2");
 	// Test 3: Capacity tracking
 	if (testHeap->GetUsedTiles() != 5 || testHeap->GetFreeTiles() != 5) {
 		UNITY_LOG_ERROR(s_Log, "Test failed: Capacity tracking");
 		return false;
 	}
-
+	UNITY_LOG(s_Log, "Successfully passed test 3"); 
 	// Test 4: Free and reallocate (tests coalescing)
 	testHeap->FreeTiles(0, 3);
 	testHeap->FreeTiles(3, 2);
@@ -274,14 +283,15 @@ UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()
 		UNITY_LOG_ERROR(s_Log, "Test failed: Free/coalesce/reallocate");
 		return false;
 	}
-
+	UNITY_LOG(s_Log, "Successfully passed test 4");
+	
 	// Test 5: Overflow
 	auto allocFail = testHeap->AllocateTiles(10); // Only 5 tiles free
 	if (allocFail.success) {
 		UNITY_LOG_ERROR(s_Log, "Test failed: Should have failed overflow");
 		return false;
 	}
-
+	
 	UNITY_LOG(s_Log, "All heap tests passed!");
 	return true;
 }
