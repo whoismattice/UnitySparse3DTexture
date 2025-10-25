@@ -27,6 +27,12 @@
     <ClInclude Include="TilingInfo.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="IHeap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FixedHeap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -36,6 +42,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RenderingPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="FixedHeap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
