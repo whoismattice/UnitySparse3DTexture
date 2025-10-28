@@ -32,6 +32,13 @@ extern "C"
         int arraySize
     );
 
+
+    UNITY_INTERFACE_EXPORT bool MapTilesToHeap(ID3D12Resource* resource, UINT subResource, UINT tileX, UINT tileY, UINT tileZ, UINT numTiles, UINT heapOffsetInTiles, ID3D12Heap* heap);
+
+    UNITY_INTERFACE_EXPORT bool UnmapTiles(ID3D12Resource* resource, UINT subResource, UINT tileX, UINT tileY, UINT tileZ, UINT numTiles);
+
+
+
     UNITY_INTERFACE_EXPORT bool TestHeapFragmentation();
 
     UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation();

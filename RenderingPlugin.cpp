@@ -240,6 +240,88 @@ static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data)
 	UNITY_LOG(s_Log, "Native Plugin: OnRenderEvent Callback Triggered");
 }
 
+
+UNITY_INTERFACE_EXPORT bool MapTilesToHeap(
+	ID3D12Resource* resource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ,
+	UINT numTiles,
+	UINT heapOffsetInTiles,
+	ID3D12Heap* heap
+) {
+	if (!s_D3D12 || !resource || !heap) return false;
+
+	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+
+	D3D12_TILED_RESOURCE_COORDINATE startCoord = {};
+	startCoord.X = tileX;
+	startCoord.Y = tileY;
+	startCoord.Z = tileZ;
+	startCoord.Subresource = subResource;
+
+	D3D12_TILE_REGION_SIZE regionSize = {};
+	regionSize.NumTiles = numTiles;
+	regionSize.UseBox = FALSE;
+
+	D3D12_TILE_RANGE_FLAGS rangeFlags = D3D12_TILE_RANGE_FLAG_NONE;
+	UINT rangeTileCount = numTiles;
+
+	queue->UpdateTileMappings(
+		resource,
+		1,
+		&startCoord,
+		&regionSize,
+		heap,
+		1,
+		&rangeFlags,
+		&heapOffsetInTiles,
+		&rangeTileCount,
+		D3D12_TILE_MAPPING_FLAG_NONE
+	);
+
+	return true;
+}
+
+UNITY_INTERFACE_EXPORT bool UnmapTiles(
+	ID3D12Resource* resource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ,
+	UINT numTiles
+) {
+	if (!s_D3D12 || !resource) return false;
+
+	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+
+	D3D12_TILED_RESOURCE_COORDINATE startCoord = {};
+	startCoord.X = tileX;
+	startCoord.Y = tileY;
+	startCoord.Z = tileZ;
+	startCoord.Subresource = subResource;
+
+	D3D12_TILE_REGION_SIZE regionSize = {};
+	regionSize.NumTiles = numTiles;
+	regionSize.UseBox = FALSE;
+
+	D3D12_TILE_RANGE_FLAGS rangeFlags = D3D12_TILE_RANGE_FLAG_NULL;
+
+	queue->UpdateTileMappings(
+		resource,
+		1,
+		&startCoord,
+		&regionSize,
+		nullptr,
+		1,
+		&rangeFlags,
+		nullptr,
+		nullptr,
+		D3D12_TILE_MAPPING_FLAG_NONE
+	);
+
+	return true;
+}
+
+
+
 UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()
 {
 	if (!s_Device) return false;
