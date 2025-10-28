@@ -66,14 +66,17 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 			UNITY_LOG(s_Log, "Native Plugin: Acquire GFX Device");
 			s_D3D12 = s_UnityInterfaces->Get<IUnityGraphicsD3D12v6>();
 			s_Device = s_D3D12->GetDevice();
-			if (s_D3D12 == nullptr)
+			if (s_D3D12 == nullptr || s_Device == nullptr)
 			{
 				UNITY_LOG_ERROR(s_Log, "Couldn't find appropriate D3D12 device");
 				break;
 			}
 			else {
 				UNITY_LOG(s_Log, "Found appropriate D3D12 device");
+				g_tileHeap = std::make_unique<FixedHeap>(s_Device, 512 * 1024 * 1024);
+				UNITY_LOG(s_Log, "Initialised tile heap");
 				InitializeDescriptorHeap();
+				UNITY_LOG(s_Log, "Initialised SRV descriptor heap");
 			}
 			break;
 		}
@@ -81,6 +84,8 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 		// Sets D3D12 device to nullptr to ensure it is not used after shutdown
 		case kUnityGfxDeviceEventShutdown:
 		{
+			g_SrvDescriptorHeap->Release();
+			g_SrvDescriptorHeap = nullptr;
 			s_Device = nullptr;
 			s_D3D12 = nullptr;
 			break;
@@ -355,14 +360,29 @@ UNITY_INTERFACE_EXPORT ID3D12Heap* GetTileHeap() {
 UNITY_INTERFACE_EXPORT bool AllocateTilesFromHeap(
 	UINT numTiles, UINT* outHeapOffset
 ) {
-	if (!g_tileHeap || !outHeapOffset) return false;
-
-	TileAllocation alloc = g_tileHeap->AllocateTiles(numTiles);
-	if (alloc.success) {
-		*outHeapOffset = alloc.heapOffsetInTiles;
+	if (!outHeapOffset) {
+		UNITY_LOG(s_Log, "AllocateTilesFromHeap: invalid parameter outHeapOffset == nullptr");
+		return false;
+	}
+	if (!g_tileHeap) {
+		UNITY_LOG(s_Log, "AllocateTilesFromHeap: tile heap (g_tileHeap) is null");
+		return false;
 	}
 
-	return alloc.success;
+	
+	TileAllocation alloc = g_tileHeap->AllocateTiles(numTiles);
+
+	if (alloc.success) {
+		*outHeapOffset = alloc.heapOffsetInTiles;
+		return true;
+	}
+	char msg[128];
+	snprintf(msg, sizeof(msg),
+		"AllocateTilesFromHeap: failed to allocate %u tiles",
+		numTiles);
+	UNITY_LOG(s_Log, msg);
+
+	return false;
 }
 
 
@@ -407,9 +427,9 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 	}
 	UINT unalignedRowSize = tilingInfo.TileWidthInTexels * bytesPerPixel;
 	const UINT alignment = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
-	UINT alignedRowPitch = (unalignedRowSize + (alignment - 1)) & ~(alignment - 1);
+	
 
-	UINT64 totalAlignedDataSize = (UINT64)alignedRowPitch * tilingInfo.TileDepthInTexels * tilingInfo.TileHeightInTexels;
+	
 
 	UINT64 unalignedTotalSize = (UINT64)unalignedRowSize
 		* tilingInfo.TileHeightInTexels
@@ -417,8 +437,11 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 
 
 	if (dataSize != (UINT)unalignedTotalSize) {
-		UNITY_LOG(s_Log, "UploadDataToTile: dataSize mismatch. expected %llu got %u",
+		char msg[256];
+		sprintf_s(msg, sizeof(msg),
+			"UploadDataToTile: dataSize mismatch. expected %llu got %u",
 			(unsigned long long)unalignedTotalSize, dataSize);
+		UNITY_LOG(s_Log, msg);
 		return false;
 	}
 
@@ -433,7 +456,7 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 
 	D3D12_RESOURCE_DESC uploadBufferDesc = {};
 	uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	uploadBufferDesc.Width = totalAlignedDataSize;
+	uploadBufferDesc.Width = requiredSizeForCopy;
 	uploadBufferDesc.Height = 1;
 	uploadBufferDesc.DepthOrArraySize = 1;
 	uploadBufferDesc.MipLevels = 1;
