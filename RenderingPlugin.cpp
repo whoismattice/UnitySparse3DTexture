@@ -26,6 +26,8 @@ static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data);
 
 static std::unique_ptr<IHeap> g_tileHeap = nullptr;
 
+static ID3D12DescriptorHeap* g_SrvDescriptorHeap = nullptr;
+static UINT g_DescriptorSize = 0;
 
 // This function is called when the plugin is loaded
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API
@@ -65,10 +67,12 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 			if (s_D3D12 == nullptr)
 			{
 				UNITY_LOG_ERROR(s_Log, "Couldn't find appropriate D3D12 device");
+				break;
 			}
 			else {
 				UNITY_LOG(s_Log, "Found appropriate D3D12 device");
 			}
+			InitializeDescriptorHeap();
 			break;
 		}
 
@@ -153,6 +157,28 @@ void UNITY_INTERFACE_API DestroyVolumetricResource(ID3D12Resource* resource)
 
 	// TODO :: implement resource destruction
 	return;
+}
+
+UNITY_INTERFACE_EXPORT UINT64 CreateSRVForResource(
+	ID3D12Resource* resource,
+	UINT descriptorIndex
+) {
+	if (!resource || !g_SrvDescriptorHeap) return 0;
+
+	D3D12_RESOURCE_DESC desc = resource->GetDesc();
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = desc.Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Texture3D.MipLevels = desc.MipLevels;
+	srvDesc.Texture3D.MostDetailedMip = 0;
+
+
+	D3D12_CPU_DESCRIPTOR_HANDLE gpuHandle = g_SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	gpuHandle.ptr += descriptorIndex * g_DescriptorSize;
+	return gpuHandle.ptr;
+
 }
 
 UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ID3D12Resource* resource, ResourceTilingInfo* outInfo) {
@@ -320,6 +346,18 @@ UNITY_INTERFACE_EXPORT bool UnmapTiles(
 	return true;
 }
 
+
+void InitializeDescriptorHeap() {
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+	heapDesc.NumDescriptors = 256;
+	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	s_Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_SrvDescriptorHeap));
+	g_DescriptorSize = s_Device->GetDescriptorHandleIncrementSize(
+		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+	);
+}
 
 
 UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()
