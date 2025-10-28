@@ -26,6 +26,8 @@ static void UNITY_INTERFACE_API OnRenderEvent(int eventId, void* data);
 
 static std::unique_ptr<IHeap> g_tileHeap = nullptr;
 
+static UINT64 g_CurrentSrvHandle = 0;
+
 static ID3D12DescriptorHeap* g_SrvDescriptorHeap = nullptr;
 static UINT g_DescriptorSize = 0;
 
@@ -412,9 +414,19 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 	UINT64 unalignedTotalSize = (UINT64)unalignedRowSize
 		* tilingInfo.TileHeightInTexels
 		* tilingInfo.TileDepthInTexels;
-	if (dataSize != unalignedTotalSize) {
+
+
+	if (dataSize != (UINT)unalignedTotalSize) {
+		UNITY_LOG(s_Log, "UploadDataToTile: dataSize mismatch. expected %llu got %u",
+			(unsigned long long)unalignedTotalSize, dataSize);
 		return false;
 	}
+
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT placedFootprint = {};
+	UINT numRows = 0;
+	UINT64 totalBytes = 0;
+	UINT64 requiredSizeForCopy = 0;
+	s_Device->GetCopyableFootprints(&desc, subResource, 1, 0, &placedFootprint, &numRows, nullptr, &requiredSizeForCopy);
 
 	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
 	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -439,96 +451,141 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 		IID_PPV_ARGS(&uploadBuffer)
 	);
 
-	if (FAILED(hr)) return false;
+	if (FAILED(hr) || !uploadBuffer) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommittedResource failed 0x%08x", hr);
+		return false;
+	}
 
-	void* mappedData = nullptr;
-	uploadBuffer->Map(0, nullptr, &mappedData);
+	void* mapped = nullptr;
+	hr = uploadBuffer->Map(0, nullptr, &mapped);
+	if (FAILED(hr) || !mapped) {
+		UNITY_LOG(s_Log, "UploadDataToTile: Map failed 0x%08x", hr);
+		uploadBuffer->Release();
+		return false;
+	}
 
-	BYTE* pDst = (BYTE*)mappedData;
-	BYTE* pSrc = (BYTE*)sourceData;
+	BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + placedFootprint.Offset; // usually 0
+	BYTE* srcBytes = reinterpret_cast<BYTE*>(sourceData);
 
-	for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z)
-	{
-		// Get pointer to the start of the current 3D slice in destination
-		BYTE* pDstSlice = pDst + (z * alignedRowPitch * tilingInfo.TileHeightInTexels);
-
-		// Get pointer to the start of the current 3D slice in source
-		BYTE* pSrcSlice = pSrc + (z * unalignedRowSize * tilingInfo.TileHeightInTexels);
-
-		for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y)
-		{
-			// Copy one row
-			memcpy(pDstSlice + (y * alignedRowPitch),   // Dest: offset by ALIGNED pitch
-				pSrcSlice + (y * unalignedRowSize),    // Src:  offset by UNALIGNED pitch
-				unalignedRowSize);                 // Amount: one UNALIGNED row's worth
+	UINT alignedRowPitch = placedFootprint.Footprint.RowPitch;
+	for (UINT z = 0; z < placedFootprint.Footprint.Depth; ++z) {
+		BYTE* dstSlice = dstBytes + (UINT64)z * alignedRowPitch * placedFootprint.Footprint.Height;
+		BYTE* srcSlice = srcBytes + (UINT64)z * unalignedRowSize * placedFootprint.Footprint.Height;
+		for (UINT y = 0; y < placedFootprint.Footprint.Height; ++y) {
+			memcpy(dstSlice + (UINT64)y * alignedRowPitch,
+				srcSlice + (UINT64)y * unalignedRowSize,
+				unalignedRowSize);
 		}
 	}
+
 	uploadBuffer->Unmap(0, nullptr);
 
-	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+	UINT heapOffsetInTiles = 0;
+	if (!AllocateTilesFromHeap(1, &heapOffsetInTiles)) {
+		UNITY_LOG(s_Log, "UploadDataToTile: AllocateTilesFromHeap failed");
+		uploadBuffer->Release();
+		return false;
+	}
+	ID3D12Heap* tileHeap = GetTileHeap();
+	if (!tileHeap) {
+		UNITY_LOG(s_Log, "UploadDataToTile: GetTileHeap returned null");
+		uploadBuffer->Release();
+		return false;
+	}
+
+	// Map the single tile of the resource to the heap offset we allocated.
+	if (!MapTilesToHeap(tiledResource, subResource, tileX, tileY, tileZ, 1, heapOffsetInTiles, tileHeap)) {
+		UNITY_LOG(s_Log, "UploadDataToTile: MapTilesToHeap failed");
+		uploadBuffer->Release();
+		return false;
+	}
+
+
+	
 	ID3D12CommandAllocator* allocator = nullptr;
-	s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+	hr = s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+	if (FAILED(hr) || !allocator) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandAllocator failed 0x%08x", hr);
+		uploadBuffer->Release();
+		return false;
+	}
 
 	ID3D12GraphicsCommandList* cmdList = nullptr;
-	s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
+	hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
+	if (FAILED(hr) || !cmdList) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandList failed 0x%08x", hr);
+		allocator->Release();
+		uploadBuffer->Release();
+		return false;
+	}
 
-	D3D12_RESOURCE_BARRIER barrier = {};
-	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barrier.Transition.pResource = tiledResource;
-	barrier.Transition.Subresource = subResource;
-	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-	cmdList->ResourceBarrier(1, &barrier);
+	D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+	srcLoc.pResource = uploadBuffer;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	srcLoc.PlacedFootprint = placedFootprint;
 
-	D3D12_TEXTURE_COPY_LOCATION dst = {};
-	dst.pResource = tiledResource;
-	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-	dst.SubresourceIndex = subResource;
-
-	D3D12_TEXTURE_COPY_LOCATION src = {};
-	src.pResource = uploadBuffer;
-	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-	src.PlacedFootprint.Offset = 0;
-	src.PlacedFootprint.Footprint.Format = desc.Format;
-	src.PlacedFootprint.Footprint.Width = tilingInfo.TileWidthInTexels;
-	src.PlacedFootprint.Footprint.Height = tilingInfo.TileHeightInTexels;
-	src.PlacedFootprint.Footprint.Depth = tilingInfo.TileDepthInTexels;
-	src.PlacedFootprint.Footprint.RowPitch = alignedRowPitch;
+	D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+	dstLoc.pResource = tiledResource;
+	dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dstLoc.SubresourceIndex = subResource;
 
 	D3D12_BOX srcBox = {};
+	srcBox.left = 0;
+	srcBox.top = 0;
+	srcBox.front = 0;
 	srcBox.right = tilingInfo.TileWidthInTexels;
 	srcBox.bottom = tilingInfo.TileHeightInTexels;
 	srcBox.back = tilingInfo.TileDepthInTexels;
 
-	cmdList->CopyTextureRegion(&dst,
-		tileX * tilingInfo.TileWidthInTexels,
-		tileY * tilingInfo.TileHeightInTexels,
-		tileZ * tilingInfo.TileDepthInTexels,
-		&src, &srcBox);
+	UINT64 dstX = tileX * tilingInfo.TileWidthInTexels;
+	UINT64 dstY = tileY * tilingInfo.TileHeightInTexels;
+	UINT64 dstZ = tileZ * tilingInfo.TileDepthInTexels;
 
-	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-	cmdList->ResourceBarrier(1, &barrier);
+	cmdList->CopyTextureRegion(&dstLoc,
+		static_cast<UINT>(dstX),
+		static_cast<UINT>(dstY),
+		static_cast<UINT>(dstZ),
+		&srcLoc,
+		&srcBox);
 
-	cmdList->Close();
+	hr = cmdList->Close();
+	if (FAILED(hr)) {
+		UNITY_LOG(s_Log, "UploadDataToTile: cmdList->Close failed 0x%08x", hr);
+		cmdList->Release();
+		allocator->Release();
+		uploadBuffer->Release();
+		return false;
+	}
 
-	ID3D12CommandList* cmdLists[] = { cmdList };
-	queue->ExecuteCommandLists(1, cmdLists);
+	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+	ID3D12CommandList* lists[] = { cmdList };
+	queue->ExecuteCommandLists(1, lists);
 
 	ID3D12Fence* fence = nullptr;
-	s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-	queue->Signal(fence, 1);
-	if (fence->GetCompletedValue() < 1) {
+	hr = s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+	if (FAILED(hr) || !fence) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateFence failed 0x%08x", hr);
+		cmdList->Release();
+		allocator->Release();
+		uploadBuffer->Release();
+		return false;
+	}
+
+	UINT64 fenceValue = 1;
+	queue->Signal(fence, fenceValue);
+	if (fence->GetCompletedValue() < fenceValue) {
 		HANDLE event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-		fence->SetEventOnCompletion(1, event);
-		WaitForSingleObject(event, 1000);
+		fence->SetEventOnCompletion(fenceValue, event);
+		WaitForSingleObject(event, INFINITE);
 		CloseHandle(event);
 	}
+
+	// Clean up
 	fence->Release();
 	cmdList->Release();
 	allocator->Release();
 	uploadBuffer->Release();
-	
+
 	return true;
 }
 
