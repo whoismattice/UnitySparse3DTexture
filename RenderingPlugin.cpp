@@ -71,8 +71,8 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 			}
 			else {
 				UNITY_LOG(s_Log, "Found appropriate D3D12 device");
+				InitializeDescriptorHeap();
 			}
-			InitializeDescriptorHeap();
 			break;
 		}
 
@@ -346,8 +346,31 @@ UNITY_INTERFACE_EXPORT bool UnmapTiles(
 	return true;
 }
 
+UNITY_INTERFACE_EXPORT ID3D12Heap* GetTileHeap() {
+	return g_tileHeap ? g_tileHeap->GetD3D12Heap() : nullptr;
+}
+
+UNITY_INTERFACE_EXPORT bool AllocateTilesFromHeap(
+	UINT numTiles, UINT* outHeapOffset
+) {
+	if (!g_tileHeap || !outHeapOffset) return false;
+
+	TileAllocation alloc = g_tileHeap->AllocateTiles(numTiles);
+	if (alloc.success) {
+		*outHeapOffset = alloc.heapOffsetInTiles;
+	}
+
+	return alloc.success;
+}
+
 
 void InitializeDescriptorHeap() {
+	if (!s_Device) {
+		UNITY_LOG_ERROR(s_Log, "Trying to create descriptor heap but graphics device has not been initialised");
+		return;
+	}
+	
+
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
 	heapDesc.NumDescriptors = 256;
 	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -357,7 +380,158 @@ void InitializeDescriptorHeap() {
 	g_DescriptorSize = s_Device->GetDescriptorHandleIncrementSize(
 		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
 	);
+
+	UNITY_LOG(s_Log, "Created SRV Descriptor Heap");
 }
+
+
+UNITY_INTERFACE_EXPORT bool UploadDataToTile(
+	ID3D12Resource* tiledResource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ,
+	void* sourceData,
+	UINT dataSize) {
+	if (!s_D3D12 || !tiledResource || !sourceData) return false;
+
+	D3D12_RESOURCE_DESC desc = tiledResource->GetDesc();
+	ResourceTilingInfo tilingInfo;
+	GetResourceTilingInfo(tiledResource, &tilingInfo);
+
+	UINT bytesPerPixel = GetBytesPerPixel(desc.Format);
+	if (bytesPerPixel == 0)
+	{
+		UNITY_LOG(s_Log, "Unsupported texture format");
+		return false;
+	}
+	UINT unalignedRowSize = tilingInfo.TileWidthInTexels * bytesPerPixel;
+	const UINT alignment = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+	UINT alignedRowPitch = (unalignedRowSize + (alignment - 1)) & ~(alignment - 1);
+
+	UINT64 totalAlignedDataSize = (UINT64)alignedRowPitch * tilingInfo.TileDepthInTexels * tilingInfo.TileHeightInTexels;
+
+	UINT64 unalignedTotalSize = (UINT64)unalignedRowSize
+		* tilingInfo.TileHeightInTexels
+		* tilingInfo.TileDepthInTexels;
+	if (dataSize != unalignedTotalSize) {
+		return false;
+	}
+
+	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+	D3D12_RESOURCE_DESC uploadBufferDesc = {};
+	uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	uploadBufferDesc.Width = totalAlignedDataSize;
+	uploadBufferDesc.Height = 1;
+	uploadBufferDesc.DepthOrArraySize = 1;
+	uploadBufferDesc.MipLevels = 1;
+	uploadBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+	uploadBufferDesc.SampleDesc.Count = 1;
+	uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	ID3D12Resource* uploadBuffer = nullptr;
+	HRESULT hr = s_Device->CreateCommittedResource(
+		&uploadHeapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&uploadBufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&uploadBuffer)
+	);
+
+	if (FAILED(hr)) return false;
+
+	void* mappedData = nullptr;
+	uploadBuffer->Map(0, nullptr, &mappedData);
+
+	BYTE* pDst = (BYTE*)mappedData;
+	BYTE* pSrc = (BYTE*)sourceData;
+
+	for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z)
+	{
+		// Get pointer to the start of the current 3D slice in destination
+		BYTE* pDstSlice = pDst + (z * alignedRowPitch * tilingInfo.TileHeightInTexels);
+
+		// Get pointer to the start of the current 3D slice in source
+		BYTE* pSrcSlice = pSrc + (z * unalignedRowSize * tilingInfo.TileHeightInTexels);
+
+		for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y)
+		{
+			// Copy one row
+			memcpy(pDstSlice + (y * alignedRowPitch),   // Dest: offset by ALIGNED pitch
+				pSrcSlice + (y * unalignedRowSize),    // Src:  offset by UNALIGNED pitch
+				unalignedRowSize);                 // Amount: one UNALIGNED row's worth
+		}
+	}
+	uploadBuffer->Unmap(0, nullptr);
+
+	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+	ID3D12CommandAllocator* allocator = nullptr;
+	s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+
+	ID3D12GraphicsCommandList* cmdList = nullptr;
+	s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
+
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Transition.pResource = tiledResource;
+	barrier.Transition.Subresource = subResource;
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+	cmdList->ResourceBarrier(1, &barrier);
+
+	D3D12_TEXTURE_COPY_LOCATION dst = {};
+	dst.pResource = tiledResource;
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = subResource;
+
+	D3D12_TEXTURE_COPY_LOCATION src = {};
+	src.pResource = uploadBuffer;
+	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	src.PlacedFootprint.Offset = 0;
+	src.PlacedFootprint.Footprint.Format = desc.Format;
+	src.PlacedFootprint.Footprint.Width = tilingInfo.TileWidthInTexels;
+	src.PlacedFootprint.Footprint.Height = tilingInfo.TileHeightInTexels;
+	src.PlacedFootprint.Footprint.Depth = tilingInfo.TileDepthInTexels;
+	src.PlacedFootprint.Footprint.RowPitch = alignedRowPitch;
+
+	D3D12_BOX srcBox = {};
+	srcBox.right = tilingInfo.TileWidthInTexels;
+	srcBox.bottom = tilingInfo.TileHeightInTexels;
+	srcBox.back = tilingInfo.TileDepthInTexels;
+
+	cmdList->CopyTextureRegion(&dst,
+		tileX * tilingInfo.TileWidthInTexels,
+		tileY * tilingInfo.TileHeightInTexels,
+		tileZ * tilingInfo.TileDepthInTexels,
+		&src, &srcBox);
+
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	cmdList->ResourceBarrier(1, &barrier);
+
+	cmdList->Close();
+
+	ID3D12CommandList* cmdLists[] = { cmdList };
+	queue->ExecuteCommandLists(1, cmdLists);
+
+	ID3D12Fence* fence = nullptr;
+	s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+	queue->Signal(fence, 1);
+	if (fence->GetCompletedValue() < 1) {
+		HANDLE event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		fence->SetEventOnCompletion(1, event);
+		WaitForSingleObject(event, 1000);
+		CloseHandle(event);
+	}
+	fence->Release();
+	cmdList->Release();
+	allocator->Release();
+	uploadBuffer->Release();
+	
+	return true;
+}
+
 
 
 UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation()

@@ -56,9 +56,58 @@ extern "C"
     );
 
 
+    UNITY_INTERFACE_EXPORT ID3D12Heap* GetTileHeap();
+
+    UNITY_INTERFACE_EXPORT bool AllocateTilesFromHeap(
+        UINT numTiles, UINT* outHeapOffset
+    );
+
+
     UNITY_INTERFACE_EXPORT bool TestHeapFragmentation();
 
     UNITY_INTERFACE_EXPORT bool TestHeapBasicAllocation();
 
+    UNITY_INTERFACE_EXPORT bool UploadDataToTile(
+        ID3D12Resource* tiledResource,
+        UINT subResource,
+        UINT tileX, UINT tileY, UINT tileZ,
+        void* sourceData,
+        UINT dataSize);
+
     void InitializeDescriptorHeap();
+
+    UINT GetBytesPerPixel(DXGI_FORMAT format)
+    {
+        switch (format)
+        {
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+            return 16;
+
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        case DXGI_FORMAT_R32G32_FLOAT:
+            return 8;
+
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_R16G16_FLOAT:
+        case DXGI_FORMAT_R32_FLOAT:
+        case DXGI_FORMAT_R32_UINT:
+        case DXGI_FORMAT_R32_SINT:
+            return 4;
+
+        case DXGI_FORMAT_R16_FLOAT:
+        case DXGI_FORMAT_R16_UINT:
+        case DXGI_FORMAT_R16_SINT:
+        case DXGI_FORMAT_R8G8_UNORM:
+            return 2;
+
+        case DXGI_FORMAT_R8_UNORM:
+        case DXGI_FORMAT_R8_UINT:
+        case DXGI_FORMAT_R8_SINT:
+            return 1;
+
+        default:
+            // Format not handled or is block-compressed
+            return 0;
+        }
+    }
 }
