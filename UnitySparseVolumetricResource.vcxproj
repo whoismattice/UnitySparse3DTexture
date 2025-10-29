@@ -143,6 +143,7 @@
     <ClInclude Include="IHeap.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="RenderingPlugin.h" />
+    <ClInclude Include="ReservedResouce.h" />
     <ClInclude Include="TilingInfo.h" />
   </ItemGroup>
   <ItemGroup>
@@ -154,6 +155,10 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="PluginFacade.cpp" />
+    <ClInclude Include="PluginFacade.h">
+      <FileType>CppCode</FileType>
+    </ClInclude>
     <ClCompile Include="RenderingPlugin.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
