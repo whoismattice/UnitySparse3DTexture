@@ -16,7 +16,6 @@ public:
 	RenderingPlugin(IUnityInterfaces* unityInterface);
 
 	void InitializeGraphicsDevice();
-	UINT GetSrvForResource();
 
 	ReservedResource* CreateVolumetricResource(
 		UINT width, UINT height, UINT depth, 
@@ -29,22 +28,24 @@ public:
 		UINT subResource,
 		UINT tileX, UINT tileY, UINT tileZ,
 		UINT tileOffsetInHeap,
-		const ReservedResource& resource);
+		ReservedResource* resource);
 
 	bool UnmapTileFromHeap(
 		UINT subResource,
 		UINT tileX, UINT tileY, UINT tileZ,
 		UINT tileOffsetInHeap,
-		const ReservedResource& resource);
+		ReservedResource* resource);
 
 	bool AllocateTileToHeap(UINT* outHeapOffset);
 
 	bool UploadDataToTile(
-		const ReservedResource& resource,
+		ReservedResource* resource,
 		UINT subResource,
 		UINT tileX, UINT tileY, UINT tileZ,
-		std::span<std::byte> sourceData
+		const std::span<std::byte>& sourceData
 	);
+
+	bool DestroyVolumetricResource(ReservedResource* resource);
 
 private:
 	
@@ -52,20 +53,13 @@ private:
 
 	void LogError(const std::string& message);
 
-	void InitialiseSrvDescriptorHeap();
-
 	IUnityInterfaces* s_UnityInterfaces;
 	IUnityGraphics* s_Graphics;
 	IUnityGraphicsD3D12v6* s_D3D12;
 	IUnityLog* s_Log;
 	ID3D12Device* s_Device;
 
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> g_SrvDescriptorHeap;
-
 	std::unique_ptr<IHeap> g_tileHeap;
-
-	UINT64 g_CurrentSrvHandle;
-	UINT g_DescriptorSize;
 
 	bool initialized;
 

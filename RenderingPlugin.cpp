@@ -13,8 +13,6 @@ RenderingPlugin::RenderingPlugin(IUnityInterfaces* unityInterface) : s_UnityInte
 	try {
 		s_Graphics = unityInterface->Get<IUnityGraphics>();
 		s_Log = unityInterface->Get<IUnityLog>();
-		g_CurrentSrvHandle = 0;
-		g_DescriptorSize = 0;
 	}
 	catch (const std::runtime_error& ex)
 	{
@@ -32,7 +30,6 @@ void RenderingPlugin::InitializeGraphicsDevice()
 			return;
 		}
 		g_tileHeap = std::make_unique<FixedHeap>(s_Device, 512 * 1024 * 1024);
-		InitialiseSrvDescriptorHeap();
 		Log("Found appropriate D3D12 device");
 		Log("TODO: CHECK FEATURE LEVEL");
 		initialized = true;
@@ -51,19 +48,6 @@ void RenderingPlugin::Log(const std::string& message)
 void RenderingPlugin::LogError(const std::string& message)
 {
 	UNITY_LOG_ERROR(s_Log, message.c_str());
-}
-
-void RenderingPlugin::InitialiseSrvDescriptorHeap() {
-	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-
-	heapDesc.NumDescriptors = 256;
-	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-	s_Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_SrvDescriptorHeap));
-	g_DescriptorSize = s_Device->GetDescriptorHandleIncrementSize(
-		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
-	);
 }
 
 ReservedResource* RenderingPlugin::CreateVolumetricResource(
@@ -93,12 +77,35 @@ ReservedResource* RenderingPlugin::CreateVolumetricResource(
 		return nullptr;
 	}
 }
+
+bool RenderingPlugin::DestroyVolumetricResource(ReservedResource* resource)
+{
+	try {
+		auto it = std::find_if(g_resources.begin(), g_resources.end(),
+			[resource](const std::unique_ptr<ReservedResource>& p) {
+				return p.get() == resource;
+			});
+		if (it != g_resources.end())
+		{
+			g_resources.erase(it);
+			return true;
+		}
+		else {
+			LogError("Reserved resource not found");
+			return false;
+		}
+	}
+	catch (std::exception ex) {
+		LogError(ex.what());
+		return false;
+	}
+}
  
 bool RenderingPlugin::MapTileToHeap(
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ,
 	UINT tileOffsetInHeap,
-	const ReservedResource& resource) {
+	ReservedResource* resource) {
 	try {
 		if (g_tileHeap == nullptr) return false;
 
@@ -120,7 +127,7 @@ bool RenderingPlugin::MapTileToHeap(
 		
 
 		queue->UpdateTileMappings(
-			resource.D3D12Resource.Get(),
+			resource->D3D12Resource.Get(),
 			1,
 			&startCoord,
 			&regionSize,
@@ -144,7 +151,7 @@ bool RenderingPlugin::UnmapTileFromHeap(
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ,
 	UINT tileOffsetInHeap,
-	const ReservedResource& resource) {
+	ReservedResource* resource) {
 	try {
 		if (!s_D3D12) return false;
 
@@ -163,7 +170,7 @@ bool RenderingPlugin::UnmapTileFromHeap(
 		D3D12_TILE_RANGE_FLAGS rangeFlags = D3D12_TILE_RANGE_FLAG_NULL;
 
 		queue->UpdateTileMappings(
-			resource.D3D12Resource.Get(),
+			resource->D3D12Resource.Get(),
 			1,
 			&startCoord,
 			&regionSize,
@@ -209,10 +216,10 @@ bool RenderingPlugin::AllocateTileToHeap(UINT* outHeapOffset) {
 }
 
 bool RenderingPlugin::UploadDataToTile(
-	const ReservedResource& resource,
+	ReservedResource* resource,
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ,
-	std::span<std::byte> sourceData
+	const std::span<std::byte>& sourceData
 ) {
 	try {
 		// Check pre-conditions
@@ -228,8 +235,8 @@ bool RenderingPlugin::UploadDataToTile(
 		}
 
 		// 
-		D3D12_RESOURCE_DESC desc = resource.D3D12Resource->GetDesc();
-		ResourceTilingInfo tilingInfo = resource.GetTilingInfo();
+		D3D12_RESOURCE_DESC desc = resource->D3D12Resource->GetDesc();
+		ResourceTilingInfo tilingInfo = resource->GetTilingInfo();
 		UINT bytesPerPixel = GetBytesPerPixel(desc.Format);
 		if (bytesPerPixel == 0)
 		{
@@ -312,6 +319,7 @@ bool RenderingPlugin::UploadDataToTile(
 			uploadBuffer->Release();
 			return false;
 		}
+
 		ID3D12Heap* tileHeap = g_tileHeap->GetD3D12Heap();
 		if (!tileHeap) {
 			LogError("UploadDataToTile: GetTileHeap returned null");
@@ -352,7 +360,7 @@ bool RenderingPlugin::UploadDataToTile(
 		srcLoc.PlacedFootprint = placedFootprint;
 
 		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-		dstLoc.pResource = resource.D3D12Resource.Get();
+		dstLoc.pResource = resource->D3D12Resource.Get();
 		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 		dstLoc.SubresourceIndex = subResource;
 

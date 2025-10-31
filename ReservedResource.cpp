@@ -68,8 +68,13 @@ ResourceTilingInfo ReservedResource::GetTilingInfo() const {
 bool ReservedResource::UploadDataToTile(
 	UINT subresource,
 	UINT tileX, UINT tileY, UINT tileZ,
-	UINT HeapOffsetInTiles,
 	std::span<const std::byte> data
+) {
+	return false;
+}
+
+bool ReservedResource::UnloadTile(UINT subresource,
+	UINT tileX, UINT tileY, UINT tileZ
 ) {
 	return false;
 }

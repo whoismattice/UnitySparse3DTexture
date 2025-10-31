@@ -19,3 +19,13 @@ public:
 	unsigned int NumPackedMips;
 	std::vector<SubresourceTilingInfo> subresourceTilingInfo;
 };
+
+
+struct C_ResourceTilingInfo {
+	unsigned int TileWidthInTexels;
+	unsigned int TileHeightInTexels;
+	unsigned int TileDepthInTexels;
+	unsigned int SubresourceCount;
+	unsigned int NumPackedMips;
+	SubresourceTilingInfo* pSubresourceTilingInfo;
+};

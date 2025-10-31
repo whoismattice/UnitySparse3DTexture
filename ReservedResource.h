@@ -28,8 +28,12 @@ public:
 	bool UploadDataToTile(
 		UINT subresource,
 		UINT tileX, UINT tileY, UINT tileZ,
-		UINT HeapOffsetInTiles,
 		std::span<const std::byte> data
+	);
+
+	bool UnloadTile(
+		UINT subresource,
+		UINT tileX, UINT tileY, UINT tileZ
 	);
 
 private:
