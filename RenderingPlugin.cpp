@@ -292,22 +292,33 @@ bool RenderingPlugin::UploadDataToTile(
 		void* mapped = nullptr;
 		hr = uploadBuffer->Map(0, nullptr, &mapped);
 		if (FAILED(hr) || !mapped) {
-			UNITY_LOG(s_Log, "UploadDataToTile: Map failed 0x%08x", hr);
+			LogError(std::format("UploadDataToTile: Map failed 0x{:08x}", hr));
 			uploadBuffer->Release();
 			return false;
 		}
 
-		BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + placedFootprint.Offset; // usually 0
-		BYTE* srcBytes = reinterpret_cast<BYTE*>(sourceData.data());
+		BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + placedFootprint.Offset;
+		const BYTE* srcBytes = reinterpret_cast<const BYTE*>(sourceData.data());
 
 		UINT alignedRowPitch = placedFootprint.Footprint.RowPitch;
-		for (UINT z = 0; z < placedFootprint.Footprint.Depth; ++z) {
-			BYTE* dstSlice = dstBytes + (UINT64)z * alignedRowPitch * placedFootprint.Footprint.Height;
-			BYTE* srcSlice = srcBytes + (UINT64)z * unalignedRowSize * placedFootprint.Footprint.Height;
-			for (UINT y = 0; y < placedFootprint.Footprint.Height; ++y) {
-				memcpy(dstSlice + (UINT64)y * alignedRowPitch,
+
+		// Copy each depth slice
+		for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z) {
+			// Destination uses aligned pitch and footprint height
+			BYTE* dstSlice = dstBytes +
+				(UINT64)z * alignedRowPitch * placedFootprint.Footprint.Height;
+
+			// Source uses unaligned pitch and actual tile height
+			const BYTE* srcSlice = srcBytes +
+				(UINT64)z * unalignedRowSize * tilingInfo.TileHeightInTexels;
+
+			// Copy each row in this slice
+			for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y) {
+				memcpy(
+					dstSlice + (UINT64)y * alignedRowPitch,
 					srcSlice + (UINT64)y * unalignedRowSize,
-					unalignedRowSize);
+					unalignedRowSize
+				);
 			}
 		}
 

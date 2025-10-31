@@ -22,7 +22,7 @@ public:
 
 	ReservedResource(UINT width, UINT height, UINT depth, bool useMipMaps, UINT mipmapCount, DXGI_FORMAT format, ID3D12Device* device, IUnityLog* logger);
 
-	ResourceTilingInfo GetTilingInfo() const;
+	const ResourceTilingInfo& GetTilingInfo() const;
 	
 
 	bool UploadDataToTile(

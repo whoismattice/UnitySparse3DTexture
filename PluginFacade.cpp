@@ -26,10 +26,11 @@ static std::unique_ptr<RenderingPlugin> g_RenderPlugin;
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API
 UnityPluginLoad(IUnityInterfaces* unityInterfaces)
 {
+	
 	g_RenderPlugin = std::make_unique<RenderingPlugin>(unityInterfaces);
 	s_Log = unityInterfaces->Get<IUnityLog>();
-
-	auto* graphics = s_UnityInterfaces->Get<IUnityGraphics>();
+	s_UnityInterfaces = unityInterfaces;
+	IUnityGraphics* graphics = s_UnityInterfaces->Get<IUnityGraphics>();
 	graphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
 	OnGraphicsDeviceEvent(kUnityGfxDeviceEventInitialize);
 }
@@ -45,6 +46,7 @@ UnityPluginUnload()
 // Implementation of GFX device callback
 static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
 {
+	
 	switch (eventType)
 	{
 		// Gets D3D12 device when initialised

@@ -63,6 +63,8 @@ private:
 
 	bool initialized;
 
+
+
 	std::vector<std::unique_ptr<ReservedResource>> g_resources;
 
 	UINT GetBytesPerPixel(DXGI_FORMAT format)

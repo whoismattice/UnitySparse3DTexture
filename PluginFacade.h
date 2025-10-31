@@ -13,7 +13,7 @@
 // C-style interface for C# to call into.
 extern "C"
 {
-    UNITY_INTERFACE_EXPORT ReservedResource* CreateVolumetricResource(int width, int height, int depth, bool useMipmaps, int mipmapCount, DXGI_FORMAT format);
+    UNITY_INTERFACE_EXPORT ReservedResource* CreateVolumetricResource(UINT width, UINT height, UINT depth, bool useMipmaps, UINT mipmapCount, DXGI_FORMAT format);
 
     // This function will release the native resource.
     UNITY_INTERFACE_EXPORT bool DestroyVolumetricResource(ReservedResource* resource);

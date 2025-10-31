@@ -60,7 +60,7 @@ ReservedResource::ReservedResource(UINT width, UINT height, UINT depth, bool use
 	}
 }
 
-ResourceTilingInfo ReservedResource::GetTilingInfo() const {
+const ResourceTilingInfo& ReservedResource::GetTilingInfo() const {
 	return tilingInfo;
 }
 
