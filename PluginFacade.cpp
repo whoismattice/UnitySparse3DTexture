@@ -375,7 +375,7 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 	ResourceTilingInfo tilingInfo;
 	GetResourceTilingInfo(tiledResource, &tilingInfo);
 
-	UINT bytesPerPixel = GetBytesPerPixel(desc.Format);
+	UINT bytesPerPixel =1;// = GetBytesPePixel(desc.Format);
 	if (bytesPerPixel == 0)
 	{
 		UNITY_LOG(s_Log, "Unsupported texture format");

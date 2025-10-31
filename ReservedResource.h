@@ -4,6 +4,7 @@
 #include "IUnityLog.h"
 #include <memory>
 #include "TilingInfo.h"
+#include <wrl/client.h>
 #include <span>
 
 
@@ -14,13 +15,15 @@ public:
 	const UINT height;
 	const UINT depth;
 	const bool useMipMaps;
+	const UINT mipMapCount;
 	const DXGI_FORMAT textureFormat;
-	std::unique_ptr<ID3D12Resource> resource;
+	Microsoft::WRL::ComPtr<ID3D12Resource> D3D12Resource;
 
 
 	ReservedResource(UINT width, UINT height, UINT depth, bool useMipMaps, UINT mipmapCount, DXGI_FORMAT format, ID3D12Device* device, IUnityLog* logger);
 
-	std::unique_ptr<std::vector<ResourceTilingInfo>> GetTilingInfo();
+	ResourceTilingInfo GetTilingInfo() const;
+	
 
 	bool UploadDataToTile(
 		UINT subresource,
@@ -32,5 +35,5 @@ public:
 private:
 	ID3D12Device* device;
 	IUnityLog* logger;
-	
+	ResourceTilingInfo tilingInfo;
 };

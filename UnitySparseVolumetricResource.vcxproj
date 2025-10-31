@@ -143,7 +143,7 @@
     <ClInclude Include="IHeap.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="RenderingPlugin.h" />
-    <ClInclude Include="ReservedResouce.h" />
+    <ClInclude Include="ReservedResource.h" />
     <ClInclude Include="TilingInfo.h" />
   </ItemGroup>
   <ItemGroup>
@@ -156,6 +156,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="PluginFacade.cpp" />
+    <ClCompile Include="ReservedResource.cpp" />
     <ClInclude Include="PluginFacade.h">
       <FileType>CppCode</FileType>
     </ClInclude>

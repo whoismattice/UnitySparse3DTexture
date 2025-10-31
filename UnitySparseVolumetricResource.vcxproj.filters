@@ -36,7 +36,7 @@
     <ClInclude Include="PluginFacade.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ReservedResouce.h">
+    <ClInclude Include="ReservedResource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -54,6 +54,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="PluginFacade.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ReservedResource.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

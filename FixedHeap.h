@@ -17,6 +17,8 @@ public:
 	UINT GetFreeTiles() const override { return m_totalTiles - m_usedTiles; }
 	bool CanAllocate(UINT numTiles) const override;
 
+
+
 private:
 	ID3D12Heap* m_heap;
 	UINT m_totalTiles;
