@@ -478,19 +478,6 @@ bool RenderingPlugin::ExecuteTileCopy(
 		return false;
 	}
 
-	HRESULT hr = s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
-	if (FAILED(hr) || !allocator) {
-		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandAllocator failed 0x%08x", hr);
-		return false;
-	}
-
-	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> cmdList = nullptr;
-	hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
-	if (FAILED(hr) || !cmdList) {
-		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandList failed 0x%08x", hr);
-		return false;
-	}
-
 	D3D12_RESOURCE_BARRIER barriers[2] = {};
 
 	// Transition to COPY_DEST
@@ -501,7 +488,7 @@ bool RenderingPlugin::ExecuteTileCopy(
 	barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
 	barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 
-	cmdList->ResourceBarrier(1, &barriers[0]);
+	m_uploadCommandList->ResourceBarrier(1, &barriers[0]);
 
 	// Copy texture
 	D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
@@ -526,7 +513,7 @@ bool RenderingPlugin::ExecuteTileCopy(
 	UINT64 dstY = tileY * tilingInfo.TileHeightInTexels;
 	UINT64 dstZ = tileZ * tilingInfo.TileDepthInTexels;
 
-	cmdList->CopyTextureRegion(&dstLoc,
+	m_uploadCommandList->CopyTextureRegion(&dstLoc,
 		static_cast<UINT>(dstX),
 		static_cast<UINT>(dstY),
 		static_cast<UINT>(dstZ),
@@ -541,16 +528,16 @@ bool RenderingPlugin::ExecuteTileCopy(
 	barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 	barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
 
-	cmdList->ResourceBarrier(1, &barriers[1]);
+	m_uploadCommandList->ResourceBarrier(1, &barriers[1]);
 
-	hr = cmdList->Close();
+	HRESULT hr = m_uploadCommandList->Close();
 	if (FAILED(hr)) {
 		LogError("UploadDataToTile: cmdList->Close failed");
 		return false;
 	}
 
 	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
-	ID3D12CommandList* lists[] = { cmdList.Get() };
+	ID3D12CommandList* lists[] = { m_uploadCommandList.Get() };
 	queue->ExecuteCommandLists(1, lists);
 
 	const UINT64 nextFenceValue = ++m_fenceValue;
@@ -560,6 +547,8 @@ bool RenderingPlugin::ExecuteTileCopy(
 		LogError("queue->Signal failed in UploadDataToTile");
 		return false;
 	}
+
+	m_allocatorFenceValues[m_currentAllocatorIndex] = nextFenceValue;
 
 	if (m_uploadFence->GetCompletedValue() < nextFenceValue) {
 		hr = m_uploadFence->SetEventOnCompletion(nextFenceValue, m_fenceEvent.get());
@@ -578,6 +567,11 @@ ID3D12CommandAllocator* RenderingPlugin::GetAvailableAllocator() {
 	UINT startIndex = m_currentAllocatorIndex;
 	for (UINT i = 0; i < ALLOCATOR_POOL_SIZE; i++) {
 		UINT index = (startIndex + i) % ALLOCATOR_POOL_SIZE;
+
+		if (m_allocatorFenceValues[index] == 0) {
+			m_currentAllocatorIndex = (index + 1) % ALLOCATOR_POOL_SIZE;
+			return m_uploadAllocators[index].Get();
+		}
 
 		if (m_uploadFence->GetCompletedValue() >= m_allocatorFenceValues[index]) {
 			m_uploadAllocators[index]->Reset();
