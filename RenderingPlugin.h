@@ -9,7 +9,18 @@
 #include <vector>
 #include "IHeap.h"
 #include "ReservedResource.h"
+#include <wil/resource.h>
 #include <string>
+
+struct TileMetrics {
+	UINT bytesPerPixel;
+	UINT unalignedRowSize;
+};
+
+struct TileMapping {
+	UINT heapOffset;
+	bool success;
+};
 
 class RenderingPlugin {
 public:
@@ -53,6 +64,46 @@ private:
 
 	void LogError(const std::string& message);
 
+	bool ValidateTileUploadParams(
+		const ReservedResource* resource,
+		UINT subresource,
+		const std::span<std::byte>& sourceData,
+		D3D12_RESOURCE_DESC* outResourceDesc,
+		ResourceTilingInfo* outResourceTilingInfo
+	);
+
+	TileMetrics CalculateTileMetrics(
+		const D3D12_RESOURCE_DESC& desc,
+		const ResourceTilingInfo& tilingInfo,
+		UINT subResource
+	);
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> CreateAndFillUploadBuffer(
+		const D3D12_RESOURCE_DESC& resourceDesc,
+		UINT subResource,
+		const std::span<std::byte>& sourceData,
+		const ResourceTilingInfo& tilingInfo,
+		const TileMetrics& metrics,
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT* outFootprint
+	);
+
+	TileMapping AllocateAndMapTileToHeap(
+		ReservedResource* resource,
+		UINT subResource,
+		UINT tileX, UINT tileY, UINT tileZ
+	);
+
+	bool ExecuteTileCopy(
+		ID3D12Resource* uploadBuffer,
+		const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+		ReservedResource* resource,
+		UINT subResource,
+		UINT tileX, UINT tileY, UINT tileZ,
+		const ResourceTilingInfo& tilingInfo
+	);
+
+
+
 	IUnityInterfaces* s_UnityInterfaces;
 	IUnityGraphics* s_Graphics;
 	IUnityGraphicsD3D12v6* s_D3D12;
@@ -63,6 +114,10 @@ private:
 
 	bool initialized;
 
+	Microsoft::WRL::ComPtr<ID3D12Fence> m_uploadFence;
+
+	UINT64 m_fenceValue = 0;
+	wil::unique_event m_fenceEvent = nullptr;
 
 
 	std::vector<std::unique_ptr<ReservedResource>> g_resources;
@@ -102,3 +157,5 @@ private:
 		}
 	}
 };
+
+

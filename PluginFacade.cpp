@@ -76,7 +76,7 @@ ReservedResource* UNITY_INTERFACE_API CreateVolumetricResource(UINT width, UINT 
 		);
 		return newResource;
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		UNITY_LOG(s_Log, ex.what());
 		return nullptr;
 	}
@@ -88,7 +88,7 @@ bool UNITY_INTERFACE_API DestroyVolumetricResource(ReservedResource* resource)
 	try {
 		return g_RenderPlugin->DestroyVolumetricResource(resource);
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		UNITY_LOG(s_Log, ex.what());
 		return true;
 	}
@@ -106,7 +106,7 @@ ID3D12Resource* UNITY_INTERFACE_API GetPointerToD3D12Resource(ReservedResource* 
 
 		return resource->D3D12Resource.Get();
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		UNITY_LOG_ERROR(s_Log, ex.what());
 		return nullptr;
 	}
@@ -126,7 +126,7 @@ UNITY_INTERFACE_EXPORT void GetResourceTilingInfo(ReservedResource* resource, C_
 		outInfo->SubresourceCount = tilingInfo.SubresourceCount;
 		outInfo->pSubresourceTilingInfo = tilingInfo.subresourceTilingInfo.data();
 	}
-	catch (std::exception ex)
+	catch (const std::exception& ex)
 	{
 		UNITY_LOG_ERROR(s_Log, ex.what());
 		return;
@@ -159,7 +159,7 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 			dataSpan
 		);
 	}
-	catch (std::exception ex)
+	catch (const std::exception& ex)
 	{
 		UNITY_LOG_ERROR(s_Log, ex.what());
 		return false;

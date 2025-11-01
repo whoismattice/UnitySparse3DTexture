@@ -13,6 +13,8 @@ RenderingPlugin::RenderingPlugin(IUnityInterfaces* unityInterface) : s_UnityInte
 	try {
 		s_Graphics = unityInterface->Get<IUnityGraphics>();
 		s_Log = unityInterface->Get<IUnityLog>();
+
+		
 	}
 	catch (const std::runtime_error& ex)
 	{
@@ -30,9 +32,20 @@ void RenderingPlugin::InitializeGraphicsDevice()
 			return;
 		}
 		g_tileHeap = std::make_unique<FixedHeap>(s_Device, 512 * 1024 * 1024);
+
+
+		HRESULT hr = s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_uploadFence));
+		if (FAILED(hr) || !m_uploadFence) {
+			LogError("UploadDataToTile: CreateFence failed");
+		}
+
+
 		Log("Found appropriate D3D12 device");
 		Log("TODO: CHECK FEATURE LEVEL");
 		initialized = true;
+
+
+
 	}
 	catch (const std::runtime_error& ex)
 	{
@@ -45,7 +58,7 @@ void RenderingPlugin::Log(const std::string& message)
 	UNITY_LOG(s_Log, message.c_str());
 }
 
-void RenderingPlugin::LogError(const std::string& message)
+void RenderingPlugin::LogError(const std::string& message) 
 {
 	UNITY_LOG_ERROR(s_Log, message.c_str());
 }
@@ -95,7 +108,7 @@ bool RenderingPlugin::DestroyVolumetricResource(ReservedResource* resource)
 			return false;
 		}
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		LogError(ex.what());
 		return false;
 	}
@@ -141,7 +154,7 @@ bool RenderingPlugin::MapTileToHeap(
 
 		return true;
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		LogError(ex.what());
 		return false;
 	}
@@ -184,7 +197,7 @@ bool RenderingPlugin::UnmapTileFromHeap(
 
 		return true;
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		LogError(ex.what());
 		return false;
 	}
@@ -209,7 +222,7 @@ bool RenderingPlugin::AllocateTileToHeap(UINT* outHeapOffset) {
 
 		return false;
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 		Log(ex.what());
 		return false;
 	}
@@ -222,222 +235,312 @@ bool RenderingPlugin::UploadDataToTile(
 	const std::span<std::byte>& sourceData
 ) {
 	try {
-		// Check pre-conditions
-		if (sourceData.size_bytes() != 65536)
-		{
-			LogError(std::format("Tried uploading data of size {} bytes, expected 65536 bytes", sourceData.size_bytes()));
-			return false;
-		}
-		if (!initialized)
-		{
-			LogError("Plugin not initialized");
-			return false;
-		}
+		D3D12_RESOURCE_DESC desc;
+		ResourceTilingInfo tilingInfo;
+		ValidateTileUploadParams(resource, subResource, sourceData, &desc, &tilingInfo);
 
-		// 
-		D3D12_RESOURCE_DESC desc = resource->D3D12Resource->GetDesc();
-		ResourceTilingInfo tilingInfo = resource->GetTilingInfo();
-		UINT bytesPerPixel = GetBytesPerPixel(desc.Format);
-		if (bytesPerPixel == 0)
-		{
-			LogError("Unsupported texture format");
-			return false;
-		}
-		UINT unalignedRowSize = tilingInfo.TileWidthInTexels * bytesPerPixel;
-		const UINT alignment = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
-
-		UINT64 unalignedTotalSize = (UINT64)unalignedRowSize * tilingInfo.TileHeightInTexels * tilingInfo.TileDepthInTexels;
-		if (sourceData.size_bytes() != (UINT) unalignedTotalSize)
-		{
-			LogError(std::format("Expected {} bytes, got {}", unalignedTotalSize, sourceData.size_bytes()));
-			return false;
-		}
+		TileMetrics tileMetrics = CalculateTileMetrics(desc, tilingInfo, subResource);
 
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT placedFootprint = {};
-		UINT numRows = 0;
-		UINT64 totalBytes = 0;
-		UINT64 requiredSizeForCopy = 0;
-		s_Device->GetCopyableFootprints(&desc, subResource, 1, 0, &placedFootprint, &numRows, nullptr, &requiredSizeForCopy);
-
-
-
-		D3D12_HEAP_PROPERTIES uploadHeapProps = {};
-		uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-		D3D12_RESOURCE_DESC uploadBufferDesc = {};
-		uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-		uploadBufferDesc.Width = requiredSizeForCopy;
-		uploadBufferDesc.Height = 1;
-		uploadBufferDesc.DepthOrArraySize = 1;
-		uploadBufferDesc.MipLevels = 1;
-		uploadBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-		uploadBufferDesc.SampleDesc.Count = 1;
-		uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-		ID3D12Resource* uploadBuffer = nullptr;
-		HRESULT hr = s_Device->CreateCommittedResource(
-			&uploadHeapProps,
-			D3D12_HEAP_FLAG_NONE,
-			&uploadBufferDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&uploadBuffer)
+		
+		Microsoft::WRL::ComPtr<ID3D12Resource> uploadBuffer = CreateAndFillUploadBuffer(
+			desc, 
+			subResource,
+			sourceData,
+			tilingInfo,
+			tileMetrics,
+			&placedFootprint
 		);
 
-		if (FAILED(hr) || !uploadBuffer) {
-			LogError("UploadDataToTile: CreateCommittedResource failed");
-			return false;
-		}
 
-		void* mapped = nullptr;
-		hr = uploadBuffer->Map(0, nullptr, &mapped);
-		if (FAILED(hr) || !mapped) {
-			LogError(std::format("UploadDataToTile: Map failed 0x{:08x}", hr));
-			uploadBuffer->Release();
-			return false;
-		}
+		AllocateAndMapTileToHeap(
+			resource, 
+			subResource, 
+			tileX, tileY, tileZ
+		);
 
-		BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + placedFootprint.Offset;
-		const BYTE* srcBytes = reinterpret_cast<const BYTE*>(sourceData.data());
-
-		UINT alignedRowPitch = placedFootprint.Footprint.RowPitch;
-
-		// Copy each depth slice
-		for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z) {
-			// Destination uses aligned pitch and footprint height
-			BYTE* dstSlice = dstBytes +
-				(UINT64)z * alignedRowPitch * placedFootprint.Footprint.Height;
-
-			// Source uses unaligned pitch and actual tile height
-			const BYTE* srcSlice = srcBytes +
-				(UINT64)z * unalignedRowSize * tilingInfo.TileHeightInTexels;
-
-			// Copy each row in this slice
-			for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y) {
-				memcpy(
-					dstSlice + (UINT64)y * alignedRowPitch,
-					srcSlice + (UINT64)y * unalignedRowSize,
-					unalignedRowSize
-				);
-			}
-		}
-
-		uploadBuffer->Unmap(0, nullptr);
-
-		UINT heapOffsetInTiles = 0;
-		if (!AllocateTileToHeap(&heapOffsetInTiles)) {
-			LogError("UploadDataToTile: AllocateTilesFromHeap failed");
-			uploadBuffer->Release();
-			return false;
-		}
-
-		ID3D12Heap* tileHeap = g_tileHeap->GetD3D12Heap();
-		if (!tileHeap) {
-			LogError("UploadDataToTile: GetTileHeap returned null");
-			uploadBuffer->Release();
-			return false;
-		}
-
-		// Map the single tile of the resource to the heap offset we allocated.
-		
-		if (!MapTileToHeap(subResource, tileX, tileY, tileZ, heapOffsetInTiles, resource)) {
-			LogError("UploadDataToTile: MapTilesToHeap failed");
-			uploadBuffer->Release();
-			return false;
-		}
-
-
-
-		ID3D12CommandAllocator* allocator = nullptr;
-		hr = s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
-		if (FAILED(hr) || !allocator) {
-			UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandAllocator failed 0x%08x", hr);
-			uploadBuffer->Release();
-			return false;
-		}
-
-		ID3D12GraphicsCommandList* cmdList = nullptr;
-		hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
-		if (FAILED(hr) || !cmdList) {
-			UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandList failed 0x%08x", hr);
-			allocator->Release();
-			uploadBuffer->Release();
-			return false;
-		}
-
-		D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
-		srcLoc.pResource = uploadBuffer;
-		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-		srcLoc.PlacedFootprint = placedFootprint;
-
-		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-		dstLoc.pResource = resource->D3D12Resource.Get();
-		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-		dstLoc.SubresourceIndex = subResource;
-
-		D3D12_BOX srcBox = {};
-		srcBox.left = 0;
-		srcBox.top = 0;
-		srcBox.front = 0;
-		srcBox.right = tilingInfo.TileWidthInTexels;
-		srcBox.bottom = tilingInfo.TileHeightInTexels;
-		srcBox.back = tilingInfo.TileDepthInTexels;
-
-		UINT64 dstX = tileX * tilingInfo.TileWidthInTexels;
-		UINT64 dstY = tileY * tilingInfo.TileHeightInTexels;
-		UINT64 dstZ = tileZ * tilingInfo.TileDepthInTexels;
-
-		cmdList->CopyTextureRegion(&dstLoc,
-			static_cast<UINT>(dstX),
-			static_cast<UINT>(dstY),
-			static_cast<UINT>(dstZ),
-			&srcLoc,
-			&srcBox);
-
-		hr = cmdList->Close();
-		if (FAILED(hr)) {
-			LogError("UploadDataToTile: cmdList->Close failed");
-			cmdList->Release();
-			allocator->Release();
-			uploadBuffer->Release();
-			return false;
-		}
-
-		ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
-		ID3D12CommandList* lists[] = { cmdList };
-		queue->ExecuteCommandLists(1, lists);
-
-		ID3D12Fence* fence = nullptr;
-		hr = s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-		if (FAILED(hr) || !fence) {
-			LogError("UploadDataToTile: CreateFence failed");
-			cmdList->Release();
-			allocator->Release();
-			uploadBuffer->Release();
-			return false;
-		}
-
-		UINT64 fenceValue = 1;
-		queue->Signal(fence, fenceValue);
-		if (fence->GetCompletedValue() < fenceValue) {
-			HANDLE event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-			fence->SetEventOnCompletion(fenceValue, event);
-			WaitForSingleObject(event, INFINITE);
-			CloseHandle(event);
-		}
-
-		// Clean up
-		fence->Release();
-		cmdList->Release();
-		allocator->Release();
-		uploadBuffer->Release();
-
-		return true;
+		ExecuteTileCopy(
+			uploadBuffer.Get(), 
+			placedFootprint, 
+			resource, 
+			subResource, 
+			tileX, tileY, tileZ, 
+			tilingInfo
+		);
 
 	}
-	catch (std::exception ex) {
+	catch (const std::exception& ex) {
 
 		LogError(ex.what());
 		return false;
 	}
+}
+
+bool RenderingPlugin::ValidateTileUploadParams(
+	const ReservedResource* resource,
+	UINT subresource,
+	const std::span<std::byte>& sourceData,
+	D3D12_RESOURCE_DESC* outResourceDesc,
+	ResourceTilingInfo* outResourceTilingInfo
+) {
+	if (sourceData.size_bytes() != 65536)
+	{
+		LogError(std::format("Tried uploading data of size {} bytes, expected 65536 bytes", sourceData.size_bytes()));
+		return false;
+	}
+	if (!initialized)
+	{
+		LogError("Plugin not initialized");
+		return false;
+	}
+
+	// Get tile size info
+	*outResourceDesc = resource->D3D12Resource->GetDesc();
+	*outResourceTilingInfo = resource->GetTilingInfo();
+	UINT bytesPerPixel = GetBytesPerPixel(outResourceDesc->Format);
+	if (bytesPerPixel == 0)
+	{
+		LogError("Unsupported texture format");
+		return false;
+	}
+	UINT unalignedRowSize = outResourceTilingInfo->TileWidthInTexels * bytesPerPixel;
+
+	UINT64 unalignedTotalSize = (UINT64)unalignedRowSize * outResourceTilingInfo->TileHeightInTexels * outResourceTilingInfo->TileDepthInTexels;
+	if (sourceData.size_bytes() != (UINT)unalignedTotalSize)
+	{
+		LogError(std::format("Expected {} bytes, got {}", unalignedTotalSize, sourceData.size_bytes()));
+		return false;
+	}
+}
+
+TileMetrics RenderingPlugin::CalculateTileMetrics(
+	const D3D12_RESOURCE_DESC& desc,
+	const ResourceTilingInfo& tilingInfo,
+	UINT subResource
+) {
+	TileMetrics out;
+	out.bytesPerPixel = GetBytesPerPixel(desc.Format);
+
+	out.unalignedRowSize = tilingInfo.TileWidthInTexels * out.bytesPerPixel;
+	const UINT alignment = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+
+	UINT64 unalignedTotalSize = (UINT64)out.unalignedRowSize * tilingInfo.TileHeightInTexels * tilingInfo.TileDepthInTexels;
+	return out;
+}
+
+Microsoft::WRL::ComPtr<ID3D12Resource> RenderingPlugin::CreateAndFillUploadBuffer(
+	const D3D12_RESOURCE_DESC& resourceDesc,
+	UINT subResource,
+	const std::span<std::byte>& sourceData,
+	const ResourceTilingInfo& tilingInfo,
+	const TileMetrics& metrics,
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT* outFootprint
+) {
+
+	UINT numRows = 0;
+	UINT64 requiredSizeForCopy = 0;
+	s_Device->GetCopyableFootprints(&resourceDesc, subResource, 1, 0, outFootprint, nullptr, nullptr, &requiredSizeForCopy);
+
+
+	// Create upload heap
+	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+	D3D12_RESOURCE_DESC uploadBufferDesc = {};
+	uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	uploadBufferDesc.Width = requiredSizeForCopy;
+	uploadBufferDesc.Height = 1;
+	uploadBufferDesc.DepthOrArraySize = 1;
+	uploadBufferDesc.MipLevels = 1;
+	uploadBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+	uploadBufferDesc.SampleDesc.Count = 1;
+	uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	Microsoft::WRL::ComPtr <ID3D12Resource> uploadBuffer = nullptr;
+	HRESULT hr = s_Device->CreateCommittedResource(
+		&uploadHeapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&uploadBufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&uploadBuffer)
+	);
+
+	if (FAILED(hr) || !uploadBuffer) {
+		LogError("UploadDataToTile: CreateCommittedResource failed");
+		throw std::exception("UploadDataToTile: CreateCommittedResource failed");
+	}
+
+	// Copy data to D3D12 resource
+	void* mapped = nullptr;
+	hr = uploadBuffer->Map(0, nullptr, &mapped);
+	if (FAILED(hr) || !mapped) {
+		LogError(std::format("UploadDataToTile: Map failed 0x{:08x}", hr));
+		throw std::exception("UploadDataToTile: Map failed ");
+	}
+
+	BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + outFootprint->Offset;
+	const BYTE* srcBytes = reinterpret_cast<const BYTE*>(sourceData.data());
+
+	UINT alignedRowPitch = outFootprint->Footprint.RowPitch;
+
+	// Copy each depth slice
+	for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z) {
+		// Destination uses aligned pitch and footprint height
+		BYTE* dstSlice = dstBytes +
+			(UINT64)z * alignedRowPitch * outFootprint->Footprint.Height;
+
+		// Source uses unaligned pitch and actual tile height
+		const BYTE* srcSlice = srcBytes +
+			(UINT64)z * metrics.unalignedRowSize * tilingInfo.TileHeightInTexels;
+
+		// Copy each row in this slice
+		for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y) {
+			memcpy(
+				dstSlice + (UINT64)y * alignedRowPitch,
+				srcSlice + (UINT64)y * metrics.unalignedRowSize,
+				metrics.unalignedRowSize
+			);
+		}
+	}
+
+	uploadBuffer->Unmap(0, nullptr);
+	return uploadBuffer;
+}
+
+TileMapping RenderingPlugin::AllocateAndMapTileToHeap(
+	ReservedResource* resource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ
+) {
+	// Allocate heap memory for tile
+	UINT heapOffsetInTiles = 0;
+	if (!AllocateTileToHeap(&heapOffsetInTiles)) {
+		LogError("UploadDataToTile: AllocateTilesFromHeap failed");
+		throw std::exception("UploadDataToTile: AllocateTilesFromHeap failed");
+	}
+
+
+	ID3D12Heap* tileHeap = g_tileHeap->GetD3D12Heap();
+	if (!tileHeap) {
+		LogError("UploadDataToTile: GetTileHeap returned null");
+		throw std::exception("UploadDataToTile: GetTileHeap returned null");
+	}
+
+	// Map the single tile of the resource to the heap offset we allocated.
+
+	if (!MapTileToHeap(subResource, tileX, tileY, tileZ, heapOffsetInTiles, resource)) {
+		LogError("UploadDataToTile: MapTilesToHeap failed");
+		throw std::exception("UploadDataToTile: MapTilesToHeap failed");
+	}
+
+	TileMapping mapping;
+	mapping.success = true;
+	mapping.heapOffset = heapOffsetInTiles;
+	return mapping;
+}
+
+bool RenderingPlugin::ExecuteTileCopy(
+	ID3D12Resource* uploadBuffer,
+	const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+	ReservedResource* resource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ,
+	const ResourceTilingInfo& tilingInfo
+) {
+	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator = nullptr;
+	HRESULT hr = s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+	if (FAILED(hr) || !allocator) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandAllocator failed 0x%08x", hr);
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> cmdList = nullptr;
+	hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&cmdList));
+	if (FAILED(hr) || !cmdList) {
+		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandList failed 0x%08x", hr);
+		return false;
+	}
+
+	D3D12_RESOURCE_BARRIER barriers[2] = {};
+
+	// Transition to COPY_DEST
+	barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barriers[0].Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	barriers[0].Transition.pResource = resource->D3D12Resource.Get();
+	barriers[0].Transition.Subresource = subResource;
+	barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+	barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+
+	cmdList->ResourceBarrier(1, &barriers[0]);
+
+	// Copy texture
+	D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+	srcLoc.pResource = uploadBuffer;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	srcLoc.PlacedFootprint = footprint;
+
+	D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+	dstLoc.pResource = resource->D3D12Resource.Get();
+	dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dstLoc.SubresourceIndex = subResource;
+
+	D3D12_BOX srcBox = {};
+	srcBox.left = 0;
+	srcBox.top = 0;
+	srcBox.front = 0;
+	srcBox.right = tilingInfo.TileWidthInTexels;
+	srcBox.bottom = tilingInfo.TileHeightInTexels;
+	srcBox.back = tilingInfo.TileDepthInTexels;
+
+	UINT64 dstX = tileX * tilingInfo.TileWidthInTexels;
+	UINT64 dstY = tileY * tilingInfo.TileHeightInTexels;
+	UINT64 dstZ = tileZ * tilingInfo.TileDepthInTexels;
+
+	cmdList->CopyTextureRegion(&dstLoc,
+		static_cast<UINT>(dstX),
+		static_cast<UINT>(dstY),
+		static_cast<UINT>(dstZ),
+		&srcLoc,
+		&srcBox);
+
+	// Transition texture back to D3D12_RESOURCE_STATE_COMMON
+	barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barriers[1].Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	barriers[1].Transition.pResource = resource->D3D12Resource.Get();
+	barriers[1].Transition.Subresource = subResource;
+	barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+	barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+
+	cmdList->ResourceBarrier(1, &barriers[1]);
+
+	hr = cmdList->Close();
+	if (FAILED(hr)) {
+		LogError("UploadDataToTile: cmdList->Close failed");
+		return false;
+	}
+
+	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
+	ID3D12CommandList* lists[] = { cmdList.Get() };
+	queue->ExecuteCommandLists(1, lists);
+
+	const UINT64 nextFenceValue = ++m_fenceValue;
+	hr = queue->Signal(m_uploadFence.Get(), nextFenceValue);
+	if (FAILED(hr))
+	{
+		LogError("queue->Signal failed in UploadDataToTile");
+		return false;
+	}
+
+	if (m_uploadFence->GetCompletedValue() < nextFenceValue) {
+		hr = m_uploadFence->SetEventOnCompletion(nextFenceValue, m_fenceEvent.get());
+		if (FAILED(hr))
+		{
+			LogError("UploadDataToTile: SetEventOnCompletion failed");
+		}
+		WaitForSingleObject(m_fenceEvent.get(), INFINITE);
+	}
+
+
+	return true;
 }
