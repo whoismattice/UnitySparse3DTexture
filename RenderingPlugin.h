@@ -65,7 +65,12 @@ private:
 	void LogError(const std::string& message);
 
 	ID3D12CommandAllocator* GetAvailableAllocator();
+	
 	bool EnsureCommandListExists(ID3D12CommandAllocator* allocator);
+
+	bool InitializeUploadBuffers();
+
+	ID3D12Resource* GetCurrentUploadBuffer();
 
 	bool ValidateTileUploadParams(
 		const ReservedResource* resource,
@@ -81,13 +86,12 @@ private:
 		UINT subResource
 	);
 
-	Microsoft::WRL::ComPtr<ID3D12Resource> CreateAndFillUploadBuffer(
+	ID3D12Resource* FillUploadBuffer(
 		const D3D12_RESOURCE_DESC& resourceDesc,
 		UINT subResource,
 		const std::span<std::byte>& sourceData,
 		const ResourceTilingInfo& tilingInfo,
-		const TileMetrics& metrics,
-		D3D12_PLACED_SUBRESOURCE_FOOTPRINT* outFootprint
+		const TileMetrics& metrics
 	);
 
 	TileMapping AllocateAndMapTileToHeap(
@@ -98,7 +102,6 @@ private:
 
 	bool ExecuteTileCopy(
 		ID3D12Resource* uploadBuffer,
-		const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
 		ReservedResource* resource,
 		UINT subResource,
 		UINT tileX, UINT tileY, UINT tileZ,
@@ -128,6 +131,7 @@ private:
 	static constexpr UINT ALLOCATOR_POOL_SIZE = 4;
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> m_uploadAllocators[ALLOCATOR_POOL_SIZE];
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_uploadBuffers[ALLOCATOR_POOL_SIZE];
 	UINT64 m_allocatorFenceValues[ALLOCATOR_POOL_SIZE] = { 0 };
 	UINT m_currentAllocatorIndex = 0;
 	

@@ -52,6 +52,11 @@ void RenderingPlugin::InitializeGraphicsDevice()
 			m_allocatorFenceValues[i] = 0;
 		}
 
+		if (!InitializeUploadBuffers()) {
+			LogError("Failed to initialize upload buffers");
+			initialized = false;
+			return;
+		}
 
 		Log("Found appropriate D3D12 device");
 		Log("TODO: CHECK FEATURE LEVEL");
@@ -253,16 +258,13 @@ bool RenderingPlugin::UploadDataToTile(
 		ValidateTileUploadParams(resource, subResource, sourceData, &desc, &tilingInfo);
 
 		TileMetrics tileMetrics = CalculateTileMetrics(desc, tilingInfo, subResource);
-
-		D3D12_PLACED_SUBRESOURCE_FOOTPRINT placedFootprint = {};
 		
-		Microsoft::WRL::ComPtr<ID3D12Resource> uploadBuffer = CreateAndFillUploadBuffer(
+		ID3D12Resource* uploadBuffer = FillUploadBuffer(
 			desc, 
 			subResource,
 			sourceData,
 			tilingInfo,
-			tileMetrics,
-			&placedFootprint
+			tileMetrics
 		);
 
 
@@ -279,8 +281,7 @@ bool RenderingPlugin::UploadDataToTile(
 
 
 		bool success = ExecuteTileCopy(
-			uploadBuffer.Get(), 
-			placedFootprint, 
+			uploadBuffer, 
 			resource, 
 			subResource, 
 			tileX, tileY, tileZ, 
@@ -353,47 +354,24 @@ TileMetrics RenderingPlugin::CalculateTileMetrics(
 	return out;
 }
 
-Microsoft::WRL::ComPtr<ID3D12Resource> RenderingPlugin::CreateAndFillUploadBuffer(
+ID3D12Resource* RenderingPlugin::FillUploadBuffer(
 	const D3D12_RESOURCE_DESC& resourceDesc,
 	UINT subResource,
 	const std::span<std::byte>& sourceData,
 	const ResourceTilingInfo& tilingInfo,
-	const TileMetrics& metrics,
-	D3D12_PLACED_SUBRESOURCE_FOOTPRINT* outFootprint
+	const TileMetrics& metrics
 ) {
 
-	// Create upload heap
-	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
-	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
 
-	D3D12_RESOURCE_DESC uploadBufferDesc = {};
-	uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	uploadBufferDesc.Width = UPLOAD_TILE_SIZE;
-	uploadBufferDesc.Height = 1;
-	uploadBufferDesc.DepthOrArraySize = 1;
-	uploadBufferDesc.MipLevels = 1;
-	uploadBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-	uploadBufferDesc.SampleDesc.Count = 1;
-	uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-	Microsoft::WRL::ComPtr <ID3D12Resource> uploadBuffer = nullptr;
-	HRESULT hr = s_Device->CreateCommittedResource(
-		&uploadHeapProps,
-		D3D12_HEAP_FLAG_NONE,
-		&uploadBufferDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&uploadBuffer)
-	);
-
-	if (FAILED(hr) || !uploadBuffer) {
-		LogError("UploadDataToTile: CreateCommittedResource failed");
-		throw std::exception("UploadDataToTile: CreateCommittedResource failed");
+	ID3D12Resource* uploadBuffer = GetCurrentUploadBuffer();
+	if (!uploadBuffer) {
+		LogError("Upload buffer is null");
+		return nullptr;
 	}
 
 	// Copy data to D3D12 resource
 	void* mapped = nullptr;
-	hr = uploadBuffer->Map(0, nullptr, &mapped);
+	HRESULT hr = uploadBuffer->Map(0, nullptr, &mapped);
 	if (FAILED(hr) || !mapped) {
 		LogError(std::format("UploadDataToTile: Map failed 0x{:08x}", hr));
 		throw std::exception("UploadDataToTile: Map failed ");
@@ -437,7 +415,6 @@ TileMapping RenderingPlugin::AllocateAndMapTileToHeap(
 
 bool RenderingPlugin::ExecuteTileCopy(
 	ID3D12Resource* uploadBuffer,
-	const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
 	ReservedResource* resource,
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ,
@@ -560,4 +537,43 @@ bool RenderingPlugin::EnsureCommandListExists(ID3D12CommandAllocator* allocator)
 	}
 
 	return true;
+}
+
+bool RenderingPlugin::InitializeUploadBuffers() {
+	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+	D3D12_RESOURCE_DESC bufferDesc = {};
+	bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	bufferDesc.Width = UPLOAD_TILE_SIZE;
+	bufferDesc.Height = 1;
+	bufferDesc.DepthOrArraySize = 1;
+	bufferDesc.MipLevels = 1;
+	bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+	bufferDesc.SampleDesc.Count = 1;
+	bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	for (UINT i = 0; i < ALLOCATOR_POOL_SIZE; ++i) {
+		HRESULT hr = s_Device->CreateCommittedResource(
+			&uploadHeapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&bufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&m_uploadBuffers[i])
+		);
+
+		if (FAILED(hr)) {
+			LogError(std::format("Failed to create upload buffer {}: 0x{:08x}", i, hr));
+			return false;
+		}
+	}
+
+	Log("Upload buffer ring initialized");
+	return true;
+}
+
+ID3D12Resource* RenderingPlugin::GetCurrentUploadBuffer() {
+	// Returns the buffer corresponding to the current allocator index
+	return m_uploadBuffers[m_currentAllocatorIndex].Get();
 }
