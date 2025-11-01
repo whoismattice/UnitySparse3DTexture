@@ -15,6 +15,9 @@ extern "C"
 {
     UNITY_INTERFACE_EXPORT ReservedResource* CreateVolumetricResource(UINT width, UINT height, UINT depth, bool useMipmaps, UINT mipmapCount, DXGI_FORMAT format);
 
+    UNITY_INTERFACE_EXPORT bool TiledResourceSupport();
+
+
     // This function will release the native resource.
     UNITY_INTERFACE_EXPORT bool DestroyVolumetricResource(ReservedResource* resource);
 

@@ -541,16 +541,6 @@ bool RenderingPlugin::ExecuteTileCopy(
 
 	m_allocatorFenceValues[m_currentAllocatorIndex] = nextFenceValue;
 
-	if (m_uploadFence->GetCompletedValue() < nextFenceValue) {
-		hr = m_uploadFence->SetEventOnCompletion(nextFenceValue, m_fenceEvent.get());
-		if (FAILED(hr))
-		{
-			LogError("UploadDataToTile: SetEventOnCompletion failed");
-		}
-		WaitForSingleObject(m_fenceEvent.get(), INFINITE);
-	}
-
-
 	return true;
 }
 
@@ -647,4 +637,21 @@ bool RenderingPlugin::InitializeUploadBuffers() {
 ID3D12Resource* RenderingPlugin::GetCurrentUploadBuffer() {
 	// Returns the buffer corresponding to the current allocator index
 	return m_uploadBuffers[m_currentAllocatorIndex].Get();
+}
+
+bool RenderingPlugin::GetTiledResourceSupportStatus() {
+	D3D12_FEATURE_DATA_D3D12_OPTIONS5 supportLevel;
+	HRESULT hr = s_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &supportLevel, sizeof(supportLevel));
+	if (SUCCEEDED(hr))
+	{
+		if (supportLevel.SRVOnlyTiledResourceTier3)
+		{
+			Log("D3D12 Feature Level 12_1 Supported");
+			return true;
+		}
+		LogError("D3D12 Feature Level 12_1 Not Supported");
+		return false;
+	}
+	LogError("D3D12 Feature Support Query Failed");
+	return false;
 }

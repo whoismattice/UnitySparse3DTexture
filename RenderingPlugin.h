@@ -50,6 +50,8 @@ public:
 	
 	bool AllocateTileToHeap(UINT* outHeapOffset);
 
+	bool GetTiledResourceSupportStatus();
+
 	bool UploadDataToTile(
 		ReservedResource* resource,
 		UINT subResource,

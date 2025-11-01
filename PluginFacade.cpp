@@ -43,6 +43,16 @@ UnityPluginUnload()
 	g_RenderPlugin.reset();
 }
 
+bool UNITY_INTERFACE_API TiledResourceSupport() { 
+	try {
+		return g_RenderPlugin->GetTiledResourceSupportStatus();
+	}
+	catch (const std::exception& ex) {
+		UNITY_LOG_ERROR(s_Log, ex.what());
+		return false;
+	}
+}
+
 // Implementation of GFX device callback
 static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
 {
