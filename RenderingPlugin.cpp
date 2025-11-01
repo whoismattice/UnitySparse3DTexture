@@ -362,18 +362,13 @@ Microsoft::WRL::ComPtr<ID3D12Resource> RenderingPlugin::CreateAndFillUploadBuffe
 	D3D12_PLACED_SUBRESOURCE_FOOTPRINT* outFootprint
 ) {
 
-	UINT numRows = 0;
-	UINT64 requiredSizeForCopy = 0;
-	s_Device->GetCopyableFootprints(&resourceDesc, subResource, 1, 0, outFootprint, nullptr, nullptr, &requiredSizeForCopy);
-
-
 	// Create upload heap
 	D3D12_HEAP_PROPERTIES uploadHeapProps = {};
 	uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
 
 	D3D12_RESOURCE_DESC uploadBufferDesc = {};
 	uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	uploadBufferDesc.Width = requiredSizeForCopy;
+	uploadBufferDesc.Width = UPLOAD_TILE_SIZE;
 	uploadBufferDesc.Height = 1;
 	uploadBufferDesc.DepthOrArraySize = 1;
 	uploadBufferDesc.MipLevels = 1;
@@ -403,32 +398,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> RenderingPlugin::CreateAndFillUploadBuffe
 		LogError(std::format("UploadDataToTile: Map failed 0x{:08x}", hr));
 		throw std::exception("UploadDataToTile: Map failed ");
 	}
-
-	BYTE* dstBytes = reinterpret_cast<BYTE*>(mapped) + outFootprint->Offset;
-	const BYTE* srcBytes = reinterpret_cast<const BYTE*>(sourceData.data());
-
-	UINT alignedRowPitch = outFootprint->Footprint.RowPitch;
-
-	// Copy each depth slice
-	for (UINT z = 0; z < tilingInfo.TileDepthInTexels; ++z) {
-		// Destination uses aligned pitch and footprint height
-		BYTE* dstSlice = dstBytes +
-			(UINT64)z * alignedRowPitch * outFootprint->Footprint.Height;
-
-		// Source uses unaligned pitch and actual tile height
-		const BYTE* srcSlice = srcBytes +
-			(UINT64)z * metrics.unalignedRowSize * tilingInfo.TileHeightInTexels;
-
-		// Copy each row in this slice
-		for (UINT y = 0; y < tilingInfo.TileHeightInTexels; ++y) {
-			memcpy(
-				dstSlice + (UINT64)y * alignedRowPitch,
-				srcSlice + (UINT64)y * metrics.unalignedRowSize,
-				metrics.unalignedRowSize
-			);
-		}
-	}
-
+	memcpy(mapped, sourceData.data(), UPLOAD_TILE_SIZE);
 	uploadBuffer->Unmap(0, nullptr);
 	return uploadBuffer;
 }
@@ -478,63 +448,36 @@ bool RenderingPlugin::ExecuteTileCopy(
 		return false;
 	}
 
-	D3D12_RESOURCE_BARRIER barriers[2] = {};
+	// Set up tile region to copy
+	D3D12_TILED_RESOURCE_COORDINATE tileCoord = {};
+	tileCoord.X = tileX;
+	tileCoord.Y = tileY;
+	tileCoord.Z = tileZ;
+	tileCoord.Subresource = subResource;
 
-	// Transition to COPY_DEST
-	barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barriers[0].Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	barriers[0].Transition.pResource = resource->D3D12Resource.Get();
-	barriers[0].Transition.Subresource = subResource;
-	barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-	barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 
-	m_uploadCommandList->ResourceBarrier(1, &barriers[0]);
+	D3D12_TILE_REGION_SIZE regionSize = {};
+	regionSize.NumTiles = 1;
+	regionSize.UseBox = TRUE;
+	regionSize.Width = 1;   // 1 tile wide
+	regionSize.Height = 1;  // 1 tile tall
+	regionSize.Depth = 1;
 
-	// Copy texture
-	D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
-	srcLoc.pResource = uploadBuffer;
-	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-	srcLoc.PlacedFootprint = footprint;
-
-	D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-	dstLoc.pResource = resource->D3D12Resource.Get();
-	dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-	dstLoc.SubresourceIndex = subResource;
-
-	D3D12_BOX srcBox = {};
-	srcBox.left = 0;
-	srcBox.top = 0;
-	srcBox.front = 0;
-	srcBox.right = tilingInfo.TileWidthInTexels;
-	srcBox.bottom = tilingInfo.TileHeightInTexels;
-	srcBox.back = tilingInfo.TileDepthInTexels;
-
-	UINT64 dstX = tileX * tilingInfo.TileWidthInTexels;
-	UINT64 dstY = tileY * tilingInfo.TileHeightInTexels;
-	UINT64 dstZ = tileZ * tilingInfo.TileDepthInTexels;
-
-	m_uploadCommandList->CopyTextureRegion(&dstLoc,
-		static_cast<UINT>(dstX),
-		static_cast<UINT>(dstY),
-		static_cast<UINT>(dstZ),
-		&srcLoc,
-		&srcBox);
-
-	// Transition texture back to D3D12_RESOURCE_STATE_COMMON
-	barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barriers[1].Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	barriers[1].Transition.pResource = resource->D3D12Resource.Get();
-	barriers[1].Transition.Subresource = subResource;
-	barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-	barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
-
-	m_uploadCommandList->ResourceBarrier(1, &barriers[1]);
+	m_uploadCommandList->CopyTiles(
+		resource->D3D12Resource.Get(),
+		&tileCoord,
+		&regionSize,
+		uploadBuffer,
+		0,  // offset in upload buffer
+		D3D12_TILE_COPY_FLAG_LINEAR_BUFFER_TO_SWIZZLED_TILED_RESOURCE
+	);
 
 	HRESULT hr = m_uploadCommandList->Close();
 	if (FAILED(hr)) {
-		LogError("UploadDataToTile: cmdList->Close failed");
+		LogError("ExecuteTileCopy: cmdList->Close failed");
 		return false;
 	}
+
 
 	ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
 	ID3D12CommandList* lists[] = { m_uploadCommandList.Get() };

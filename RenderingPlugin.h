@@ -131,7 +131,7 @@ private:
 	UINT64 m_allocatorFenceValues[ALLOCATOR_POOL_SIZE] = { 0 };
 	UINT m_currentAllocatorIndex = 0;
 	
-
+	static constexpr UINT64 UPLOAD_TILE_SIZE = 65536;
 
 	std::vector<std::unique_ptr<ReservedResource>> g_resources;
 
