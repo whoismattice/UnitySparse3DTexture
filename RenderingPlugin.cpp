@@ -312,11 +312,30 @@ bool RenderingPlugin::UploadDataToTile(
 		);
 
 
-		TileMapping mapping = AllocateAndMapTileToHeap(
-			resource, 
-			subResource, 
-			tileX, tileY, tileZ
-		);
+		TileMapping mapping; 
+		bool tileAlreadyMapped = resource->IsTileMapped(subResource, tileX, tileY, tileZ);
+		if (tileAlreadyMapped) {
+			UINT existingHeapOffset;
+			if (!resource->GetMappedTileOffset(subResource, tileX, tileY, tileZ, &existingHeapOffset)) {
+				LogError("Tile reported as mapped but couldn't get heap offset");
+				return false;
+			}
+
+			mapping.success = true;
+			mapping.heapOffset = existingHeapOffset;
+		}
+		else {
+			mapping = AllocateAndMapTileToHeap(resource, subResource, tileX, tileY, tileZ);
+
+			if (!mapping.success) {
+				LogError("Couldn't find space for tile on heap");
+				return false;
+			}
+
+			// Register the new tile mapping
+			resource->RegisterMappedTile(subResource, tileX, tileY, tileZ, mapping.heapOffset);
+		}
+
 		if (!mapping.success)
 		{
 			LogError("Couldn't find space for tile on heap");
@@ -334,9 +353,11 @@ bool RenderingPlugin::UploadDataToTile(
 		);
 		if (!success)
 		{
-			resource->UnregisterMappedTile(subResource, tileX, tileY, tileZ);
-			UnmapTileFromHeap(subResource, tileX, tileY, tileZ, mapping.heapOffset, resource);
-			g_tileHeap->FreeTiles(mapping.heapOffset, 1);
+			if (!tileAlreadyMapped) {
+				resource->UnregisterMappedTile(subResource, tileX, tileY, tileZ);
+				UnmapTileFromHeap(subResource, tileX, tileY, tileZ, mapping.heapOffset, resource);
+				g_tileHeap->FreeTiles(mapping.heapOffset, 1);
+			}
 		}
 
 		return success;
