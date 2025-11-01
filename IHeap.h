@@ -28,6 +28,8 @@ public:
     virtual UINT GetUsedTiles() const = 0;
     virtual UINT GetFreeTiles() const = 0;
 
+
+
     // Check if allocation would succeed without actually allocating
     virtual bool CanAllocate(UINT numTiles) const = 0;
 };

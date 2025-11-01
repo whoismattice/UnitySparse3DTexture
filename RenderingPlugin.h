@@ -64,6 +64,9 @@ private:
 
 	void LogError(const std::string& message);
 
+	ID3D12CommandAllocator* GetAvailableAllocator();
+	bool EnsureCommandListExists(ID3D12CommandAllocator* allocator);
+
 	bool ValidateTileUploadParams(
 		const ReservedResource* resource,
 		UINT subresource,
@@ -118,6 +121,16 @@ private:
 
 	UINT64 m_fenceValue = 0;
 	wil::unique_event m_fenceEvent = nullptr;
+
+
+	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> m_uploadCommandList;
+
+	static constexpr UINT ALLOCATOR_POOL_SIZE = 4;
+
+	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> m_uploadAllocators[ALLOCATOR_POOL_SIZE];
+	UINT64 m_allocatorFenceValues[ALLOCATOR_POOL_SIZE] = { 0 };
+	UINT m_currentAllocatorIndex = 0;
+	
 
 
 	std::vector<std::unique_ptr<ReservedResource>> g_resources;

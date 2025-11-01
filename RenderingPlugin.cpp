@@ -25,18 +25,31 @@ RenderingPlugin::RenderingPlugin(IUnityInterfaces* unityInterface) : s_UnityInte
 void RenderingPlugin::InitializeGraphicsDevice()
 {
 	try {
+		// Get graphics device from Unity interface
 		s_D3D12 = s_UnityInterfaces->Get<IUnityGraphicsD3D12v6>();
 		s_Device = s_D3D12->GetDevice();
 		if (s_D3D12 == nullptr || s_Device == nullptr)
 		{
 			return;
 		}
+
+		// Create tile heap
 		g_tileHeap = std::make_unique<FixedHeap>(s_Device, 512 * 1024 * 1024);
 
 
+		// Create fence object
 		HRESULT hr = s_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_uploadFence));
 		if (FAILED(hr) || !m_uploadFence) {
 			LogError("UploadDataToTile: CreateFence failed");
+		}
+
+		// Create allocator pool
+		for (UINT i = 0; i < ALLOCATOR_POOL_SIZE; ++i) {
+			s_Device->CreateCommandAllocator(
+				D3D12_COMMAND_LIST_TYPE_DIRECT,
+				IID_PPV_ARGS(m_uploadAllocators[i].GetAddressOf())
+			);
+			m_allocatorFenceValues[i] = 0;
 		}
 
 
@@ -253,13 +266,19 @@ bool RenderingPlugin::UploadDataToTile(
 		);
 
 
-		AllocateAndMapTileToHeap(
+		TileMapping mapping = AllocateAndMapTileToHeap(
 			resource, 
 			subResource, 
 			tileX, tileY, tileZ
 		);
+		if (!mapping.success)
+		{
+			LogError("Couldn't find space for tile on heap");
+			return false;
+		}
 
-		ExecuteTileCopy(
+
+		bool success = ExecuteTileCopy(
 			uploadBuffer.Get(), 
 			placedFootprint, 
 			resource, 
@@ -267,6 +286,12 @@ bool RenderingPlugin::UploadDataToTile(
 			tileX, tileY, tileZ, 
 			tilingInfo
 		);
+		if (!success)
+		{
+			UnmapTileFromHeap(subResource, tileX, tileY, tileZ, mapping.heapOffset, resource);
+		}
+
+		return success;
 
 	}
 	catch (const std::exception& ex) {
@@ -448,7 +473,11 @@ bool RenderingPlugin::ExecuteTileCopy(
 	UINT tileX, UINT tileY, UINT tileZ,
 	const ResourceTilingInfo& tilingInfo
 ) {
-	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator = nullptr;
+	ID3D12CommandAllocator* allocator = GetAvailableAllocator();
+	if (!allocator || !EnsureCommandListExists(allocator)) {
+		return false;
+	}
+
 	HRESULT hr = s_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
 	if (FAILED(hr) || !allocator) {
 		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandAllocator failed 0x%08x", hr);
@@ -456,7 +485,7 @@ bool RenderingPlugin::ExecuteTileCopy(
 	}
 
 	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> cmdList = nullptr;
-	hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&cmdList));
+	hr = s_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmdList));
 	if (FAILED(hr) || !cmdList) {
 		UNITY_LOG(s_Log, "UploadDataToTile: CreateCommandList failed 0x%08x", hr);
 		return false;
@@ -541,6 +570,57 @@ bool RenderingPlugin::ExecuteTileCopy(
 		WaitForSingleObject(m_fenceEvent.get(), INFINITE);
 	}
 
+
+	return true;
+}
+
+ID3D12CommandAllocator* RenderingPlugin::GetAvailableAllocator() {
+	UINT startIndex = m_currentAllocatorIndex;
+	for (UINT i = 0; i < ALLOCATOR_POOL_SIZE; i++) {
+		UINT index = (startIndex + i) % ALLOCATOR_POOL_SIZE;
+
+		if (m_uploadFence->GetCompletedValue() >= m_allocatorFenceValues[index]) {
+			m_uploadAllocators[index]->Reset();
+			m_currentAllocatorIndex = (index + 1) % ALLOCATOR_POOL_SIZE;
+
+			return m_uploadAllocators[index].Get();
+		}
+	}
+
+	UINT64 oldestFenceValue = m_allocatorFenceValues[startIndex];
+	if (m_uploadFence->GetCompletedValue() < oldestFenceValue) {
+		m_uploadFence->SetEventOnCompletion(oldestFenceValue, m_fenceEvent.get());
+		WaitForSingleObject(m_fenceEvent.get(), INFINITE);
+	}
+
+	m_uploadAllocators[startIndex]->Reset();
+	m_currentAllocatorIndex = (startIndex + 1) % ALLOCATOR_POOL_SIZE;
+	return m_uploadAllocators[startIndex].Get();
+}
+
+bool RenderingPlugin::EnsureCommandListExists(ID3D12CommandAllocator* allocator) {
+	if (m_uploadCommandList) {
+		HRESULT hr = m_uploadCommandList->Reset(allocator, nullptr);
+		if (FAILED(hr)) {
+			LogError(std::format("Failed to reset command list: 0x{:08x}", hr));
+			return false;
+		}
+		return true;
+	}
+
+	// First time - create it
+	HRESULT hr = s_Device->CreateCommandList(
+		0,
+		D3D12_COMMAND_LIST_TYPE_DIRECT,
+		allocator,
+		nullptr,
+		IID_PPV_ARGS(&m_uploadCommandList)
+	);
+
+	if (FAILED(hr)) {
+		LogError(std::format("Failed to create command list: 0x{:08x}", hr));
+		return false;
+	}
 
 	return true;
 }
