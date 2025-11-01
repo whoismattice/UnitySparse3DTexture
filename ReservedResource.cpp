@@ -64,17 +64,44 @@ const ResourceTilingInfo& ReservedResource::GetTilingInfo() const {
 	return tilingInfo;
 }
 
+void ReservedResource::RegisterMappedTile(UINT subresource, UINT x, UINT y, UINT z, UINT heapOffset) {
 
-bool ReservedResource::UploadDataToTile(
-	UINT subresource,
-	UINT tileX, UINT tileY, UINT tileZ,
-	std::span<const std::byte> data
-) {
-	return false;
+	UINT64 key = GetTileKey(subresource, x, y, z);
+
+	MappedTile tile;
+	tile.heapOffset = heapOffset;
+	tile.subResource = subresource;
+	tile.tileX = x;
+	tile.tileY = y;
+	tile.tileZ = z;
+
+	mappedTiles[key] = tile;
 }
 
-bool ReservedResource::UnloadTile(UINT subresource,
-	UINT tileX, UINT tileY, UINT tileZ
-) {
-	return false;
+bool ReservedResource::GetMappedTileOffset(UINT subresource, UINT x, UINT y, UINT z, UINT* outOffset) const {
+	if (!outOffset) {
+		return false;
+	}
+
+	UINT64 key = GetTileKey(subresource, x, y, z);
+	auto it = mappedTiles.find(key);
+
+	if (it == mappedTiles.end()) {
+		return false;
+	}
+
+	*outOffset = it->second.heapOffset;
+	return true;
+}
+
+void ReservedResource::UnregisterMappedTile(UINT subresource, UINT x, UINT y, UINT z) {
+
+	UINT64 key = GetTileKey(subresource, x, y, z);
+	mappedTiles.erase(key);
+}
+
+bool ReservedResource::IsTileMapped(UINT subresource, UINT x, UINT y, UINT z) const {
+
+	UINT64 key = GetTileKey(subresource, x, y, z);
+	return mappedTiles.find(key) != mappedTiles.end();
 }

@@ -178,6 +178,50 @@ bool RenderingPlugin::MapTileToHeap(
 	}
 }
 
+bool RenderingPlugin::UnmapDataFromTile(
+	ReservedResource* resource,
+	UINT subResource,
+	UINT tileX, UINT tileY, UINT tileZ
+) {
+	try {
+		if (!resource) {
+			LogError("UnmapDataFromTile: null resource");
+			return false;
+		}
+
+		// Check if tile is actually mapped
+		if (!resource->IsTileMapped(subResource, tileX, tileY, tileZ)) {
+			LogError("UnmapDataFromTile: tile is not mapped");
+			return false;
+		}
+
+		// Get the heap offset
+		UINT heapOffset;
+		if (!resource->GetMappedTileOffset(subResource, tileX, tileY, tileZ, &heapOffset)) {
+			LogError("UnmapDataFromTile: failed to get heap offset");
+			return false;
+		}
+
+		// Unmap from GPU
+		if (!UnmapTileFromHeap(subResource, tileX, tileY, tileZ, heapOffset, resource)) {
+			LogError("UnmapDataFromTile: failed to unmap tile from heap");
+			return false;
+		}
+
+		// Free heap memory
+		g_tileHeap->FreeTiles(heapOffset, 1);
+
+		// Unregister from tracking
+		resource->UnregisterMappedTile(subResource, tileX, tileY, tileZ);
+
+		return true;
+	}
+	catch (const std::exception& ex) {
+		LogError(ex.what());
+		return false;
+	}
+}
+
 bool RenderingPlugin::UnmapTileFromHeap(
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ,
@@ -279,6 +323,7 @@ bool RenderingPlugin::UploadDataToTile(
 			return false;
 		}
 
+		resource->RegisterMappedTile(subResource, tileX, tileY, tileZ, mapping.heapOffset);
 
 		bool success = ExecuteTileCopy(
 			uploadBuffer, 
@@ -289,7 +334,9 @@ bool RenderingPlugin::UploadDataToTile(
 		);
 		if (!success)
 		{
+			resource->UnregisterMappedTile(subResource, tileX, tileY, tileZ);
 			UnmapTileFromHeap(subResource, tileX, tileY, tileZ, mapping.heapOffset, resource);
+			g_tileHeap->FreeTiles(mapping.heapOffset, 1);
 		}
 
 		return success;
@@ -410,6 +457,9 @@ TileMapping RenderingPlugin::AllocateAndMapTileToHeap(
 	TileMapping mapping;
 	mapping.success = true;
 	mapping.heapOffset = heapOffsetInTiles;
+
+	resource->RegisterMappedTile(subResource, tileX, tileY, tileZ, mapping.heapOffset);
+
 	return mapping;
 }
 

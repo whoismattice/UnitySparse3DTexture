@@ -41,12 +41,13 @@ public:
 		UINT tileOffsetInHeap,
 		ReservedResource* resource);
 
-	bool UnmapTileFromHeap(
+	bool UnmapDataFromTile(
+		ReservedResource* resource,
 		UINT subResource,
-		UINT tileX, UINT tileY, UINT tileZ,
-		UINT tileOffsetInHeap,
-		ReservedResource* resource);
+		UINT tileX, UINT tileY, UINT tileZ
+	);
 
+	
 	bool AllocateTileToHeap(UINT* outHeapOffset);
 
 	bool UploadDataToTile(
@@ -63,6 +64,13 @@ private:
 	void Log(const std::string& message);
 
 	void LogError(const std::string& message);
+
+	bool UnmapTileFromHeap(
+		UINT subResource,
+		UINT tileX, UINT tileY, UINT tileZ,
+		UINT tileOffsetInHeap,
+		ReservedResource* resource);
+
 
 	ID3D12CommandAllocator* GetAvailableAllocator();
 	

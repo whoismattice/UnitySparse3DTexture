@@ -6,7 +6,7 @@
 #include "TilingInfo.h"
 #include <wrl/client.h>
 #include <span>
-
+#include <unordered_map>
 
 class ReservedResource {
 public:
@@ -24,19 +24,40 @@ public:
 
 	const ResourceTilingInfo& GetTilingInfo() const;
 	
-
-	bool UploadDataToTile(
-		UINT subresource,
-		UINT tileX, UINT tileY, UINT tileZ,
-		std::span<const std::byte> data
+	void RegisterMappedTile(
+		UINT subresource, 
+		UINT x, UINT y, UINT z, 
+		UINT heapOffset
 	);
 
-	bool UnloadTile(
-		UINT subresource,
-		UINT tileX, UINT tileY, UINT tileZ
+	bool GetMappedTileOffset(
+		UINT subresource, 
+		UINT x, UINT y, UINT z, 
+		UINT* outOffset
+	) const;
+
+	void UnregisterMappedTile(
+		UINT subresource, 
+		UINT x, UINT y, UINT z
 	);
+
+	bool IsTileMapped(
+		UINT subresource, 
+		UINT x, UINT y, UINT z
+	) const;
 
 private:
+	struct MappedTile {
+		UINT heapOffset;
+		UINT subResource;
+		UINT tileX, tileY, tileZ;
+	};
+	std::unordered_map<UINT64, MappedTile> mappedTiles;
+
+	UINT64 GetTileKey(UINT subresource, UINT x, UINT y, UINT z) const {
+		return ((UINT64)subresource << 48) | ((UINT64)x << 32) | ((UINT64)y << 16) | z;
+	}
+
 	ID3D12Device* device;
 	IUnityLog* logger;
 	ResourceTilingInfo tilingInfo;

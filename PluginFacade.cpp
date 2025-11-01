@@ -174,6 +174,11 @@ UNITY_INTERFACE_EXPORT bool UnmapTile(
 	UINT tileX, UINT tileY, UINT tileZ
 )
 {
-	UNITY_LOG_ERROR(s_Log, "Unmapping tiles has not been implemented yet");
-	return false;
+	try {
+		g_RenderPlugin->UnmapDataFromTile(resource, subResource, tileX, tileY, tileZ);
+
+	} catch (const std::exception& ex) {
+		UNITY_LOG_ERROR(s_Log, ex.what());
+		return false;
+	}
 }
