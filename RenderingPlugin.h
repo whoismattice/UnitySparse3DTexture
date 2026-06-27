@@ -7,6 +7,8 @@
 #include <wrl/client.h>
 #include <memory>
 #include <vector>
+#include <atomic>
+#include <mutex>
 #include "IHeap.h"
 #include "ReservedResource.h"
 #include "Diagnostics.h"
@@ -159,7 +161,8 @@ private:
 
 	std::unique_ptr<IHeap> g_tileHeap;
 
-	bool initialized = false;
+	std::atomic<bool> initialized{false};
+	std::mutex m_mutex;
 
 	Microsoft::WRL::ComPtr<ID3D12Fence> m_uploadFence;
 

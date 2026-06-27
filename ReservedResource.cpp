@@ -72,6 +72,7 @@ const ResourceTilingInfo& ReservedResource::GetTilingInfo() const {
 }
 
 void ReservedResource::RegisterMappedTile(UINT subresource, UINT x, UINT y, UINT z, UINT heapOffset) {
+	std::lock_guard<std::mutex> lock(m_tileMutex);
 
 	UINT64 key = GetTileKey(subresource, x, y, z);
 
@@ -86,6 +87,7 @@ void ReservedResource::RegisterMappedTile(UINT subresource, UINT x, UINT y, UINT
 }
 
 bool ReservedResource::GetMappedTileOffset(UINT subresource, UINT x, UINT y, UINT z, UINT* outOffset) const {
+	std::lock_guard<std::mutex> lock(m_tileMutex);
 	if (!outOffset) {
 		return false;
 	}
@@ -102,12 +104,14 @@ bool ReservedResource::GetMappedTileOffset(UINT subresource, UINT x, UINT y, UIN
 }
 
 void ReservedResource::UnregisterMappedTile(UINT subresource, UINT x, UINT y, UINT z) {
+	std::lock_guard<std::mutex> lock(m_tileMutex);
 
 	UINT64 key = GetTileKey(subresource, x, y, z);
 	mappedTiles.erase(key);
 }
 
 bool ReservedResource::IsTileMapped(UINT subresource, UINT x, UINT y, UINT z) const {
+	std::lock_guard<std::mutex> lock(m_tileMutex);
 
 	UINT64 key = GetTileKey(subresource, x, y, z);
 	return mappedTiles.find(key) != mappedTiles.end();

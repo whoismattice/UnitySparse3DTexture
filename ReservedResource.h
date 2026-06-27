@@ -7,6 +7,7 @@
 #include <wrl/client.h>
 #include <span>
 #include <unordered_map>
+#include <mutex>
 
 class ReservedResource {
 public:
@@ -53,6 +54,7 @@ private:
 		UINT tileX, tileY, tileZ;
 	};
 	std::unordered_map<UINT64, MappedTile> mappedTiles;
+	mutable std::mutex m_tileMutex;
 
 	UINT64 GetTileKey(UINT subresource, UINT x, UINT y, UINT z) const {
 		return ((UINT64)subresource << 48) | ((UINT64)x << 32) | ((UINT64)y << 16) | z;

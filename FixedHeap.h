@@ -2,6 +2,7 @@
 #include "IHeap.h"
 #include <vector>
 #include <queue>
+#include <mutex>
 
 class FixedHeap : public IHeap {
 public:
@@ -23,6 +24,7 @@ private:
 	ID3D12Heap* m_heap;
 	UINT m_totalTiles;
 	UINT m_usedTiles;
+	mutable std::mutex m_heapMutex;
 
 	struct FreeBlock {
 		UINT offset;

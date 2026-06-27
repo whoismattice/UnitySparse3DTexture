@@ -36,6 +36,7 @@ FixedHeap::~FixedHeap()
 
 TileAllocation FixedHeap::AllocateTiles(UINT numTiles)
 {
+	std::lock_guard<std::mutex> lock(m_heapMutex);
 	TileAllocation result = { 0, nullptr, false };
 
 	for (auto it = m_freeBlocks.begin(); it != m_freeBlocks.end(); ++it)
@@ -63,6 +64,7 @@ TileAllocation FixedHeap::AllocateTiles(UINT numTiles)
 
 void FixedHeap::FreeTiles(UINT offsetInTiles, UINT numTiles)
 {
+	std::lock_guard<std::mutex> lock(m_heapMutex);
 	m_usedTiles -= numTiles;
 
 	m_freeBlocks.push_back({ offsetInTiles, numTiles });
@@ -96,6 +98,7 @@ void FixedHeap::CoalesceFreeBlocks()
 }
 
 bool FixedHeap::CanAllocate(UINT numTiles) const {
+	std::lock_guard<std::mutex> lock(m_heapMutex);
 	for (const auto& block : m_freeBlocks) {
 		if (block.count >= numTiles)
 			return true;

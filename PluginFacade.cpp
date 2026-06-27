@@ -153,6 +153,11 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 	UINT dataSize
 ) {
 	try {
+		if (!g_RenderPlugin)
+		{
+			UNITY_LOG_ERROR(s_Log, "UploadDataToTile: plugin not initialized");
+			return false;
+		}
 		if (tiledResource == nullptr)
 		{
 			UNITY_LOG_ERROR(s_Log, "Reserved resource is not assigned");
@@ -206,6 +211,11 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTileBox(
 )
 {
 	try {
+		if (!g_RenderPlugin)
+		{
+			UNITY_LOG_ERROR(s_Log, "UploadDataToTileBox: plugin not initialized");
+			return false;
+		}
 		if (tiledResource == nullptr)
 		{
 			UNITY_LOG_ERROR(s_Log, "UploadDataToTileBox: reserved resource is null");
@@ -239,6 +249,11 @@ UNITY_INTERFACE_EXPORT bool UnmapTile(
 )
 {
 	try {
+		if (!g_RenderPlugin)
+		{
+			UNITY_LOG_ERROR(s_Log, "UnmapTile: plugin not initialized");
+			return false;
+		}
 		return g_RenderPlugin->UnmapDataFromTile(resource, subResource, tileX, tileY, tileZ);
 
 	} catch (const std::exception& ex) {

@@ -58,7 +58,7 @@ void RenderingPlugin::InitializeGraphicsDevice()
 
 		// Check tiled resource support before allocating resources
 		if (!GetTiledResourceSupportStatus()) {
-			initialized = false;
+			initialized.store(false, std::memory_order_release);
 			return;
 		}
 
@@ -83,18 +83,18 @@ void RenderingPlugin::InitializeGraphicsDevice()
 
 		if (!InitializeUploadBuffers()) {
 			LogError("Failed to initialize upload buffers");
-			initialized = false;
+			initialized.store(false, std::memory_order_release);
 			return;
 		}
 
 		if (!InitializeBatchUploadBuffers()) {
 			LogError("Failed to initialize batch upload buffers");
-			initialized = false;
+			initialized.store(false, std::memory_order_release);
 			return;
 		}
 
 		Log("Found appropriate D3D12 device");
-		initialized = true;
+		initialized.store(true, std::memory_order_release);
 
 		RunDiagnostics(false);
 
@@ -121,7 +121,7 @@ ReservedResource* RenderingPlugin::CreateVolumetricResource(
 	UINT mipmapCount,
 	DXGI_FORMAT format
 ) {
-	if (!initialized) {
+	if (!initialized.load(std::memory_order_acquire)) {
 		LogError("CreateVolumetricResource called before plugin initialised with D3D12 device");
 		return nullptr;
 	}
@@ -171,7 +171,12 @@ bool RenderingPlugin::MapTileToHeap(
 	UINT tileX, UINT tileY, UINT tileZ,
 	UINT tileOffsetInHeap,
 	ReservedResource* resource) {
+	if (!initialized.load(std::memory_order_acquire)) {
+		LogError("MapTileToHeap: plugin not initialized");
+		return false;
+	}
 	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
 		if (g_tileHeap == nullptr) return false;
 
 		ID3D12CommandQueue* queue = s_D3D12->GetCommandQueue();
@@ -217,7 +222,12 @@ bool RenderingPlugin::UnmapDataFromTile(
 	UINT subResource,
 	UINT tileX, UINT tileY, UINT tileZ
 ) {
+	if (!initialized.load(std::memory_order_acquire)) {
+		LogError("UnmapDataFromTile: plugin not initialized");
+		return false;
+	}
 	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
 		if (!resource) {
 			LogError("UnmapDataFromTile: null resource");
 			return false;
@@ -330,7 +340,12 @@ bool RenderingPlugin::UploadDataToTile(
 	UINT tileX, UINT tileY, UINT tileZ,
 	const std::span<std::byte>& sourceData
 ) {
+	if (!initialized.load(std::memory_order_acquire)) {
+		LogError("UploadDataToTile: plugin not initialized");
+		return false;
+	}
 	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
 		D3D12_RESOURCE_DESC desc;
 		ResourceTilingInfo tilingInfo;
 		ValidateTileUploadParams(resource, subResource, sourceData, &desc, &tilingInfo);
@@ -425,7 +440,7 @@ bool RenderingPlugin::ValidateTileUploadParams(
 		LogError(std::format("Tried uploading data of size {} bytes, expected 65536 bytes", sourceData.size_bytes()));
 		return false;
 	}
-	if (!initialized)
+	if (!initialized.load(std::memory_order_acquire))
 	{
 		LogError("Plugin not initialized");
 		return false;
@@ -717,7 +732,7 @@ bool RenderingPlugin::ValidateTileBoxParams(
 	D3D12_RESOURCE_DESC* outResourceDesc,
 	ResourceTilingInfo* outResourceTilingInfo
 ) {
-	if (!initialized)
+	if (!initialized.load(std::memory_order_acquire))
 	{
 		LogError("UploadDataToTileBox: plugin not initialized");
 		return false;
@@ -833,7 +848,12 @@ bool RenderingPlugin::UploadDataToTileBox(
 	const TileBox& box,
 	const std::span<std::byte>& sourceData
 ) {
+	if (!initialized.load(std::memory_order_acquire)) {
+		LogError("UploadDataToTileBox: plugin not initialized");
+		return false;
+	}
 	try {
+		std::lock_guard<std::mutex> lock(m_mutex);
 		// Validation
 		D3D12_RESOURCE_DESC desc;
 		ResourceTilingInfo tilingInfo;
