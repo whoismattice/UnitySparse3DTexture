@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ReservedResource.h"
+#include <format>
 
 
 ReservedResource::ReservedResource(UINT width, UINT height, UINT depth, bool useMipMaps, UINT mipmapCount, DXGI_FORMAT format, ID3D12Device* device, IUnityLog* logger) :
@@ -14,9 +15,9 @@ ReservedResource::ReservedResource(UINT width, UINT height, UINT depth, bool use
 	desc.Height = static_cast<UINT>(height);
 	desc.DepthOrArraySize = static_cast<UINT16>(depth);
 	desc.MipLevels = useMipMaps ? mipmapCount : 1;
-	desc.Format = static_cast<DXGI_FORMAT>(format),
-		desc.SampleDesc.Count = 1,
-		desc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
+	desc.Format = static_cast<DXGI_FORMAT>(format);
+	desc.SampleDesc.Count = 1;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
 	desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
 	HRESULT hr = device->CreateReservedResource(
@@ -25,6 +26,12 @@ ReservedResource::ReservedResource(UINT width, UINT height, UINT depth, bool use
 		nullptr,
 		IID_PPV_ARGS(&D3D12Resource)
 	);
+
+	if (FAILED(hr))
+	{
+		UNITY_LOG_ERROR(logger, std::format("HRESULT: {:#0X}", static_cast<unsigned int>(hr)).c_str());
+		return;
+	}
 
 	D3D12_RESOURCE_DESC resourceDescription = D3D12Resource->GetDesc();
 	UINT numTilesForEntireResource = 0;

@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include "FixedHeap.h"
 #include <format>
+#include <thread>
+#include <chrono>
 #include "RenderingPlugin.h"
 
 
@@ -25,11 +27,43 @@ RenderingPlugin::RenderingPlugin(IUnityInterfaces* unityInterface) : s_UnityInte
 void RenderingPlugin::InitializeGraphicsDevice()
 {
 	try {
-		// Get graphics device from Unity interface
-		s_D3D12 = s_UnityInterfaces->Get<IUnityGraphicsD3D12v6>();
-		s_Device = s_D3D12->GetDevice();
+		// Retry device acquisition — the D3D12 environment may not be ready
+		// when the plugin first loads.
+		constexpr int MAX_RETRIES = 5;
+		constexpr auto RETRY_DELAY = std::chrono::milliseconds(200);
+
+		for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
+			try {
+				s_D3D12 = s_UnityInterfaces->Get<IUnityGraphicsD3D12v6>();
+				if (s_D3D12 != nullptr) {
+					s_Device = s_D3D12->GetDevice();
+					if (s_Device != nullptr) {
+						break;
+					}
+				}
+			}
+			catch (const std::runtime_error&) {
+				// Interface not available yet — retry
+			}
+
+			if (attempt < MAX_RETRIES) {
+				std::this_thread::sleep_for(RETRY_DELAY);
+			}
+		}
+
 		if (s_D3D12 == nullptr || s_Device == nullptr)
 		{
+			LogError(std::format(
+				"Failed to acquire D3D12 device after {} attempts",
+				MAX_RETRIES));
+			return;
+		}
+
+		// Check tiled resource support before allocating resources
+		if (!GetTiledResourceSupportStatus()) {
+			LogError("Plugin requires D3D12 tiled resource tier 3, "
+			         "which is not supported by this device");
+			initialized = false;
 			return;
 		}
 
@@ -59,7 +93,6 @@ void RenderingPlugin::InitializeGraphicsDevice()
 		}
 
 		Log("Found appropriate D3D12 device");
-		Log("TODO: CHECK FEATURE LEVEL");
 		initialized = true;
 
 

@@ -128,7 +128,7 @@ private:
 
 	std::unique_ptr<IHeap> g_tileHeap;
 
-	bool initialized;
+	bool initialized = false;
 
 	Microsoft::WRL::ComPtr<ID3D12Fence> m_uploadFence;
 
