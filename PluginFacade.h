@@ -37,4 +37,15 @@ extern "C"
         UINT subresource,
         UINT tileX, UINT tileY, UINT tileZ
     );
+
+    UNITY_INTERFACE_EXPORT bool RunDiagnostics();
+
+    UNITY_INTERFACE_EXPORT bool UploadDataToTileBox(
+        ReservedResource* reservedResource,
+        UINT subResource,
+        UINT startX, UINT startY, UINT startZ,
+        UINT width, UINT height, UINT depth,
+        void* sourceData,
+        UINT totalDataSize
+    );
 }

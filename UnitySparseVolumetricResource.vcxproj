@@ -139,6 +139,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Diagnostics.h" />
     <ClInclude Include="FixedHeap.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="IHeap.h" />
@@ -148,6 +149,7 @@
     <ClInclude Include="TilingInfo.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Diagnostics.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="FixedHeap.cpp" />
     <ClCompile Include="pch.cpp">

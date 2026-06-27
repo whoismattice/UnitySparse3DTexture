@@ -10,6 +10,7 @@
 #include <string>
 #include <memory>
 #include "RenderingPlugin.h"
+#include "Diagnostics.h"
 
 // Unity interfaces
 static IUnityInterfaces* s_UnityInterfaces = nullptr;
@@ -176,6 +177,59 @@ UNITY_INTERFACE_EXPORT bool UploadDataToTile(
 	}
 	
 
+}
+
+UNITY_INTERFACE_EXPORT bool RunDiagnostics()
+{
+	try {
+		if (!g_RenderPlugin)
+		{
+			UNITY_LOG_ERROR(s_Log, "RunDiagnostics: plugin not initialized");
+			return false;
+		}
+		auto results = g_RenderPlugin->RunDiagnostics(true);
+		return Diagnostics::AllPassed(results);
+	}
+	catch (const std::exception& ex) {
+		UNITY_LOG_ERROR(s_Log, ex.what());
+		return false;
+	}
+}
+
+UNITY_INTERFACE_EXPORT bool UploadDataToTileBox(
+	ReservedResource* tiledResource,
+	UINT subResource,
+	UINT startX, UINT startY, UINT startZ,
+	UINT width, UINT height, UINT depth,
+	void* sourceData,
+	UINT totalDataSize
+)
+{
+	try {
+		if (tiledResource == nullptr)
+		{
+			UNITY_LOG_ERROR(s_Log, "UploadDataToTileBox: reserved resource is null");
+			return false;
+		}
+
+		TileBox box;
+		box.subResource = subResource;
+		box.startX = startX;
+		box.startY = startY;
+		box.startZ = startZ;
+		box.width = width;
+		box.height = height;
+		box.depth = depth;
+
+		std::span<std::byte> dataSpan(
+			static_cast<std::byte*>(sourceData), totalDataSize);
+
+		return g_RenderPlugin->UploadDataToTileBox(tiledResource, box, dataSpan);
+	}
+	catch (const std::exception& ex) {
+		UNITY_LOG_ERROR(s_Log, ex.what());
+		return false;
+	}
 }
 
 UNITY_INTERFACE_EXPORT bool UnmapTile(

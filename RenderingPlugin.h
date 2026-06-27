@@ -9,6 +9,7 @@
 #include <vector>
 #include "IHeap.h"
 #include "ReservedResource.h"
+#include "Diagnostics.h"
 #include <wil/resource.h>
 #include <string>
 
@@ -22,6 +23,14 @@ struct TileMapping {
 	bool success;
 };
 
+struct TileBox {
+	UINT subResource;
+	UINT startX, startY, startZ;
+	UINT width, height, depth;
+
+	UINT TileCount() const { return width * height * depth; }
+};
+
 class RenderingPlugin {
 public:
 	RenderingPlugin(IUnityInterfaces* unityInterface);
@@ -29,11 +38,11 @@ public:
 	void InitializeGraphicsDevice();
 
 	ReservedResource* CreateVolumetricResource(
-		UINT width, UINT height, UINT depth, 
+		UINT width, UINT height, UINT depth,
 		bool useMipmaps,
 		UINT mipmapCount,
 		DXGI_FORMAT format
-	);	
+	);
 
 	bool MapTileToHeap(
 		UINT subResource,
@@ -47,7 +56,7 @@ public:
 		UINT tileX, UINT tileY, UINT tileZ
 	);
 
-	
+
 	bool AllocateTileToHeap(UINT* outHeapOffset);
 
 	bool GetTiledResourceSupportStatus();
@@ -59,10 +68,20 @@ public:
 		const std::span<std::byte>& sourceData
 	);
 
+	bool UploadDataToTileBox(
+		ReservedResource* resource,
+		const TileBox& box,
+		const std::span<std::byte>& sourceData
+	);
+
 	bool DestroyVolumetricResource(ReservedResource* resource);
 
+	std::vector<DiagnosticResult> RunDiagnostics(bool includeSmokeTest = false);
+
 private:
-	
+
+	void LogDiagnosticResults(const std::vector<DiagnosticResult>& results);
+
 	void Log(const std::string& message);
 
 	void LogError(const std::string& message);
@@ -74,13 +93,13 @@ private:
 		ReservedResource* resource);
 
 
-	ID3D12CommandAllocator* GetAvailableAllocator();
-	
+	ID3D12CommandAllocator* GetAvailableAllocator(UINT& outAllocatorIndex);
+
 	bool EnsureCommandListExists(ID3D12CommandAllocator* allocator);
 
 	bool InitializeUploadBuffers();
 
-	ID3D12Resource* GetCurrentUploadBuffer();
+	bool InitializeBatchUploadBuffers();
 
 	bool ValidateTileUploadParams(
 		const ReservedResource* resource,
@@ -97,11 +116,8 @@ private:
 	);
 
 	ID3D12Resource* FillUploadBuffer(
-		const D3D12_RESOURCE_DESC& resourceDesc,
-		UINT subResource,
-		const std::span<std::byte>& sourceData,
-		const ResourceTilingInfo& tilingInfo,
-		const TileMetrics& metrics
+		ID3D12Resource* uploadBuffer,
+		const std::span<std::byte>& sourceData
 	);
 
 	TileMapping AllocateAndMapTileToHeap(
@@ -115,9 +131,24 @@ private:
 		ReservedResource* resource,
 		UINT subResource,
 		UINT tileX, UINT tileY, UINT tileZ,
-		const ResourceTilingInfo& tilingInfo
+		const ResourceTilingInfo& tilingInfo,
+		UINT allocatorIndex
 	);
 
+	bool ValidateTileBoxParams(
+		const ReservedResource* resource,
+		const TileBox& box,
+		const std::span<std::byte>& sourceData,
+		D3D12_RESOURCE_DESC* outResourceDesc,
+		ResourceTilingInfo* outResourceTilingInfo
+	);
+
+	void RollbackTileBoxMapping(
+		ReservedResource* resource,
+		const TileBox& box,
+		UINT heapOffsetInTiles,
+		UINT tileCount
+	);
 
 
 	IUnityInterfaces* s_UnityInterfaces;
@@ -142,10 +173,12 @@ private:
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> m_uploadAllocators[ALLOCATOR_POOL_SIZE];
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_uploadBuffers[ALLOCATOR_POOL_SIZE];
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_batchUploadBuffers[ALLOCATOR_POOL_SIZE];
 	UINT64 m_allocatorFenceValues[ALLOCATOR_POOL_SIZE] = { 0 };
 	UINT m_currentAllocatorIndex = 0;
-	
+
 	static constexpr UINT64 UPLOAD_TILE_SIZE = 65536;
+	static constexpr UINT64 BATCH_UPLOAD_BYTE_SIZE = 32 * 65536; // 2 MiB
 
 	std::vector<std::unique_ptr<ReservedResource>> g_resources;
 
@@ -184,5 +217,3 @@ private:
 		}
 	}
 };
-
-
