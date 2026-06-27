@@ -185,7 +185,7 @@ UNITY_INTERFACE_EXPORT bool UnmapTile(
 )
 {
 	try {
-		g_RenderPlugin->UnmapDataFromTile(resource, subResource, tileX, tileY, tileZ);
+		return g_RenderPlugin->UnmapDataFromTile(resource, subResource, tileX, tileY, tileZ);
 
 	} catch (const std::exception& ex) {
 		UNITY_LOG_ERROR(s_Log, ex.what());

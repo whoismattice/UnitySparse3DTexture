@@ -53,16 +53,11 @@ void RenderingPlugin::InitializeGraphicsDevice()
 
 		if (s_D3D12 == nullptr || s_Device == nullptr)
 		{
-			LogError(std::format(
-				"Failed to acquire D3D12 device after {} attempts",
-				MAX_RETRIES));
 			return;
 		}
 
 		// Check tiled resource support before allocating resources
 		if (!GetTiledResourceSupportStatus()) {
-			LogError("Plugin requires D3D12 tiled resource tier 3, "
-			         "which is not supported by this device");
 			initialized = false;
 			return;
 		}
@@ -365,8 +360,6 @@ bool RenderingPlugin::UploadDataToTile(
 				return false;
 			}
 
-			// Register the new tile mapping
-			resource->RegisterMappedTile(subResource, tileX, tileY, tileZ, mapping.heapOffset);
 		}
 
 		if (!mapping.success)
@@ -374,8 +367,6 @@ bool RenderingPlugin::UploadDataToTile(
 			LogError("Couldn't find space for tile on heap");
 			return false;
 		}
-
-		resource->RegisterMappedTile(subResource, tileX, tileY, tileZ, mapping.heapOffset);
 
 		bool success = ExecuteTileCopy(
 			uploadBuffer, 
@@ -438,6 +429,7 @@ bool RenderingPlugin::ValidateTileUploadParams(
 		LogError(std::format("Expected {} bytes, got {}", unalignedTotalSize, sourceData.size_bytes()));
 		return false;
 	}
+	return true;
 }
 
 TileMetrics RenderingPlugin::CalculateTileMetrics(
@@ -663,7 +655,6 @@ bool RenderingPlugin::InitializeUploadBuffers() {
 		}
 	}
 
-	Log("Upload buffer ring initialized");
 	return true;
 }
 
@@ -679,10 +670,10 @@ bool RenderingPlugin::GetTiledResourceSupportStatus() {
 	{
 		if (supportLevel.SRVOnlyTiledResourceTier3)
 		{
-			Log("D3D12 Feature Level 12_1 Supported");
+			Log("D3D12 Feature Tiled Resources Tier 3 Supported");
 			return true;
 		}
-		LogError("D3D12 Feature Level 12_1 Not Supported");
+		LogError("D3D12 Feature Tiled Resources Tier 3 Not Supported");
 		return false;
 	}
 	LogError("D3D12 Feature Support Query Failed");
