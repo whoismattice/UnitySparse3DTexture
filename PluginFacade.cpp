@@ -97,6 +97,10 @@ ReservedResource* UNITY_INTERFACE_API CreateVolumetricResource(UINT width, UINT 
 bool UNITY_INTERFACE_API DestroyVolumetricResource(ReservedResource* resource)
 {
 	try {
+		if (!g_RenderPlugin)
+		{
+			return true;
+		}
 		return g_RenderPlugin->DestroyVolumetricResource(resource);
 	}
 	catch (const std::exception& ex) {

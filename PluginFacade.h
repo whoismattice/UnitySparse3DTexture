@@ -10,13 +10,14 @@
 #include "ReservedResource.h"
 
 
+struct SparseTextureFunctionTable;
+
 // C-style interface for C# to call into.
 extern "C"
 {
     UNITY_INTERFACE_EXPORT ReservedResource* CreateVolumetricResource(UINT width, UINT height, UINT depth, bool useMipmaps, UINT mipmapCount, DXGI_FORMAT format);
 
     UNITY_INTERFACE_EXPORT bool TiledResourceSupport();
-
 
     // This function will release the native resource.
     UNITY_INTERFACE_EXPORT bool DestroyVolumetricResource(ReservedResource* resource);
@@ -37,6 +38,15 @@ extern "C"
         UINT subresource,
         UINT tileX, UINT tileY, UINT tileZ
     );
+
+    UNITY_INTERFACE_EXPORT bool IsTileMapped(
+        ReservedResource* resource,
+        UINT subresource,
+        UINT tileX, UINT tileY, UINT tileZ);
+
+    UNITY_INTERFACE_EXPORT void GetFunctionTable(
+        ReservedResource* resource,
+        SparseTextureFunctionTable* outTable);
 
     UNITY_INTERFACE_EXPORT bool RunDiagnostics();
 

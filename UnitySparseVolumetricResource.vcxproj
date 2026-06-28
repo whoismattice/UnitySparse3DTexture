@@ -146,6 +146,7 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="RenderingPlugin.h" />
     <ClInclude Include="ReservedResource.h" />
+    <ClInclude Include="SparseTextureInterface.h" />
     <ClInclude Include="TilingInfo.h" />
   </ItemGroup>
   <ItemGroup>
@@ -164,6 +165,7 @@
       <FileType>CppCode</FileType>
     </ClInclude>
     <ClCompile Include="RenderingPlugin.cpp" />
+    <ClCompile Include="SparseTextureBridge.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
